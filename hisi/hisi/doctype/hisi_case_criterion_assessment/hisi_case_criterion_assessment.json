@@ -66,7 +66,7 @@
  "module": "hisi",
  "name": "HISI Case Criterion Assessment",
  "owner": "Administrator",
- "row_format": "Basic",
+ "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "ASC",
  "states": []

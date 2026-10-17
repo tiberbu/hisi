@@ -52,7 +52,7 @@
  "module": "hisi",
  "name": "HISI Checklist Criterion",
  "owner": "Administrator",
- "row_format": "Basic",
+ "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "ASC",
  "states": []

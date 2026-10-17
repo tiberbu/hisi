@@ -138,7 +138,7 @@
    "role": "HISI Vendor"
   }
  ],
- "row_format": "Basic",
+ "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "ASC",
  "states": []
