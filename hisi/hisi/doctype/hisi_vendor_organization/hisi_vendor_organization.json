@@ -1,0 +1,68 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:organization_name",
+ "creation": "2026-10-17 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "organization_name",
+  "website",
+  "members"
+ ],
+ "fields": [
+  {
+   "fieldname": "organization_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Organization Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "website",
+   "fieldtype": "Data",
+   "label": "Website"
+  },
+  {
+   "description": "Users who may access this organization's HISI workspace.",
+   "fieldname": "members",
+   "fieldtype": "Table",
+   "label": "Members",
+   "options": "HISI Organization Member"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Vendor Organization",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Basic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

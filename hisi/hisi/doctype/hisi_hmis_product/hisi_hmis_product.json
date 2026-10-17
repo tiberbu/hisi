@@ -1,0 +1,78 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:product_name",
+ "creation": "2026-10-17 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "vendor",
+  "product_name",
+  "release_version",
+  "platform_notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "vendor",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Vendor",
+   "options": "HISI Vendor Organization",
+   "reqd": 1
+  },
+  {
+   "fieldname": "product_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Product Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "HMIS release/build presented for SHA claims testing.",
+   "fieldname": "release_version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Release Version",
+   "reqd": 1
+  },
+  {
+   "fieldname": "platform_notes",
+   "fieldtype": "Small Text",
+   "label": "Platform Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI HMIS Product",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Basic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

@@ -1,0 +1,73 @@
+{
+ "actions": [],
+ "creation": "2026-10-17 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "criterion_id",
+  "criterion_title",
+  "is_critical",
+  "assessment",
+  "rationale",
+  "assessed_by",
+  "assessed_on"
+ ],
+ "fields": [
+  {
+   "description": "Stable source-row key, e.g. CC-01. Kept separate from any printed ID that may repeat.",
+   "fieldname": "criterion_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Criterion ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "criterion_title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Criterion Title"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_critical",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Critical"
+  },
+  {
+   "default": "Not assessed",
+   "fieldname": "assessment",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Assessment",
+   "options": "Not assessed\nNot applicable\nPass\nPass with observation\nPartial\nFail\nBlocked"
+  },
+  {
+   "fieldname": "rationale",
+   "fieldtype": "Small Text",
+   "label": "Rationale"
+  },
+  {
+   "fieldname": "assessed_by",
+   "fieldtype": "Data",
+   "label": "Assessed By"
+  },
+  {
+   "fieldname": "assessed_on",
+   "fieldtype": "Datetime",
+   "label": "Assessed On"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Case Criterion Assessment",
+ "owner": "Administrator",
+ "row_format": "Basic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

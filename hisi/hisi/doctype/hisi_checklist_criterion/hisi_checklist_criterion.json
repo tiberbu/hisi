@@ -1,0 +1,59 @@
+{
+ "actions": [],
+ "creation": "2026-10-17 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "criterion_id",
+  "title",
+  "is_critical",
+  "statement",
+  "evidence_options"
+ ],
+ "fields": [
+  {
+   "description": "Source criterion identifier, e.g. CC-01.",
+   "fieldname": "criterion_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Criterion ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_critical",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Critical"
+  },
+  {
+   "fieldname": "statement",
+   "fieldtype": "Text",
+   "label": "Statement"
+  },
+  {
+   "fieldname": "evidence_options",
+   "fieldtype": "Small Text",
+   "label": "Evidence Options"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Checklist Criterion",
+ "owner": "Administrator",
+ "row_format": "Basic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

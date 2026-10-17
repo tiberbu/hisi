@@ -5,6 +5,9 @@ app_description = "HISI - SHA claims validation for DHA-certified HMIS"
 app_email = "dev@tiberbu.app"
 app_license = "mit"
 
+# Roles created automatically on install.
+roles = ["HISI Reviewer", "HISI Vendor"]
+
 # Apps
 # ------------------
 

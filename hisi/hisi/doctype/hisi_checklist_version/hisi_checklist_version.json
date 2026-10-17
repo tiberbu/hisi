@@ -1,0 +1,85 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:version",
+ "creation": "2026-10-17 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "version",
+  "effective_on",
+  "published",
+  "criteria",
+  "release_notes"
+ ],
+ "fields": [
+  {
+   "description": "Checklist release identifier, e.g. 1.0.",
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Version",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "effective_on",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Effective On"
+  },
+  {
+   "default": "0",
+   "description": "A published release is immutable; criteria must not be edited afterwards.",
+   "fieldname": "published",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Published"
+  },
+  {
+   "fieldname": "criteria",
+   "fieldtype": "Table",
+   "label": "Criteria",
+   "options": "HISI Checklist Criterion",
+   "reqd": 1
+  },
+  {
+   "fieldname": "release_notes",
+   "fieldtype": "Small Text",
+   "label": "Release Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Checklist Version",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Basic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}
