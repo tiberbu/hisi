@@ -13,8 +13,11 @@ def get_validation_case_view(case: str | None = None) -> dict:
 	if frappe.session.user == "Guest":
 		frappe.throw("Not authorized", frappe.PermissionError)
 
+	# frappe.get_doc does not enforce permissions; check explicitly on every
+	# document this method reads (NFR-001).
 	if case:
 		doc = frappe.get_doc("HISI SHA Validation Case", case)
+		doc.check_permission("read")
 	else:
 		first = frappe.get_list(
 			"HISI SHA Validation Case",
@@ -28,9 +31,13 @@ def get_validation_case_view(case: str | None = None) -> dict:
 		doc = frappe.get_doc("HISI SHA Validation Case", first[0].name)
 
 	vendor = frappe.get_doc("HISI Vendor Organization", doc.vendor)
+	vendor.check_permission("read")
 	product = frappe.get_doc("HISI HMIS Product", doc.product)
+	product.check_permission("read")
 	dha = frappe.get_doc("HISI DHA Certification Reference", doc.dha_certificate)
+	dha.check_permission("read")
 	checklist = frappe.get_doc("HISI Checklist Version", doc.checklist_version)
+	checklist.check_permission("read")
 
 	assessment_by_id = {row.criterion_id: row for row in doc.criteria_assessments}
 	criteria = []

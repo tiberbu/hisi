@@ -8,6 +8,20 @@ app_license = "mit"
 # Roles created automatically on install.
 roles = ["HISI Reviewer", "HISI Vendor"]
 
+# Permissions (server-side row scoping: vendor users see their own organization only)
+ORG_SCOPED_DOCTYPES = [
+	"HISI Vendor Organization",
+	"HISI HMIS Product",
+	"HISI DHA Certification Reference",
+	"HISI SHA Validation Case",
+]
+
+has_permission = {doctype: "hisi.permissions.has_permission" for doctype in ORG_SCOPED_DOCTYPES}
+
+permission_query_conditions = {
+	doctype: "hisi.permissions.get_permission_query_conditions" for doctype in ORG_SCOPED_DOCTYPES
+}
+
 # Apps
 # ------------------
 
