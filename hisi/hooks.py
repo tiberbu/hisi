@@ -1,26 +1,9 @@
 app_name = "hisi"
-app_title = "HISI"
-app_publisher = "Tiberbu"
-app_description = "HISI - SHA claims validation for DHA-certified HMIS"
-app_email = "dev@tiberbu.app"
+app_title = "Hisi"
+app_publisher = "saleem"
+app_description = "Health Information System Interoperability"
+app_email = "salim@tiberbu.com"
 app_license = "mit"
-
-# Roles created automatically on install.
-roles = ["HISI Reviewer", "HISI Vendor"]
-
-# Permissions (server-side row scoping: vendor users see their own organization only)
-ORG_SCOPED_DOCTYPES = [
-	"HISI Vendor Organization",
-	"HISI HMIS Product",
-	"HISI DHA Certification Reference",
-	"HISI SHA Validation Case",
-]
-
-has_permission = {doctype: "hisi.permissions.has_permission" for doctype in ORG_SCOPED_DOCTYPES}
-
-permission_query_conditions = {
-	doctype: "hisi.permissions.get_permission_query_conditions" for doctype in ORG_SCOPED_DOCTYPES
-}
 
 # Apps
 # ------------------
@@ -32,7 +15,7 @@ permission_query_conditions = {
 # 	{
 # 		"name": "hisi",
 # 		"logo": "/assets/hisi/logo.png",
-# 		"title": "HISI",
+# 		"title": "Hisi",
 # 		"route": "/hisi",
 # 		"has_permission": "hisi.api.permission.has_app_permission"
 # 	}

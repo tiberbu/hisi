@@ -1,9 +1,9 @@
 [project]
 name = "hisi"
 authors = [
-    { name = "Tiberbu", email = "dev@tiberbu.app"}
+    { name = "saleem", email = "salim@tiberbu.com"}
 ]
-description = "HISI - SHA claims validation for DHA-certified HMIS"
+description = "Health Information System Interoperability"
 requires-python = ">=3.14"
 readme = "README.md"
 dynamic = ["version"]
