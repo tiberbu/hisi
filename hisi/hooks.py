@@ -1,6 +1,6 @@
 app_name = "hisi"
 app_title = "Hisi"
-app_publisher = "saleem"
+app_publisher = "salim"
 app_description = "Health Information System Interoperability"
 app_email = "salim@tiberbu.com"
 app_license = "mit"

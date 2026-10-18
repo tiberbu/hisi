@@ -1,7 +1,7 @@
 [project]
 name = "hisi"
 authors = [
-    { name = "saleem", email = "salim@tiberbu.com"}
+    { name = "salim", email = "salim@tiberbu.com"}
 ]
 description = "Health Information System Interoperability"
 requires-python = ">=3.14"
