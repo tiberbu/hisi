@@ -1,0 +1,195 @@
+{
+ "actions": [],
+ "autoname": "format:SHA-DISP-{YYYY}-{#####}",
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "validation_case",
+  "vendor",
+  "disposition",
+  "issued_by",
+  "issued_on",
+  "column_break_d",
+  "dha_certificate",
+  "dha_status_at_issue",
+  "evidence_bundle_hash",
+  "details_section",
+  "rationale",
+  "conditions",
+  "evidence_bundle"
+ ],
+ "fields": [
+  {
+   "fieldname": "validation_case",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Validation Case",
+   "options": "HISI SHA Validation Case",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "vendor",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Vendor",
+   "options": "HISI Vendor Organization",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "disposition",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Disposition",
+   "options": "Validation passed\nPassed with findings\nRemediation required\nNot validated\nBlocked",
+   "reqd": 1
+  },
+  {
+   "fieldname": "issued_by",
+   "fieldtype": "Link",
+   "label": "Issued By",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "issued_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Issued On",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_d",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "dha_certificate",
+   "fieldtype": "Link",
+   "label": "DHA Certificate",
+   "options": "HISI DHA Certification Reference"
+  },
+  {
+   "description": "Snapshot only. The DHA certification track is never modified by an SHA disposition.",
+   "fieldname": "dha_status_at_issue",
+   "fieldtype": "Data",
+   "label": "DHA Status at Issue"
+  },
+  {
+   "fieldname": "evidence_bundle_hash",
+   "fieldtype": "Data",
+   "label": "Evidence Bundle SHA-256"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Decision"
+  },
+  {
+   "fieldname": "rationale",
+   "fieldtype": "Small Text",
+   "label": "Rationale",
+   "reqd": 1
+  },
+  {
+   "fieldname": "conditions",
+   "fieldtype": "Small Text",
+   "label": "Conditions"
+  },
+  {
+   "fieldname": "evidence_bundle",
+   "fieldtype": "Code",
+   "label": "Evidence Bundle (canonical JSON)",
+   "options": "JSON"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI SHA Disposition",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HISI Administrator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Technical/API Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Clinical/Claims Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Decision Authority"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Auditor / Observer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HMIS Vendor Administrator"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Technical Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Clinical / Operations Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -1,0 +1,194 @@
+{
+ "actions": [],
+ "autoname": "format:RUN-{YYYY}-{#####}",
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "validation_case",
+  "vendor",
+  "status",
+  "environment_url",
+  "synthetic_pack",
+  "release_version",
+  "column_break_run",
+  "started_by",
+  "started_on",
+  "completed_on",
+  "cancelled_by",
+  "stages_section",
+  "stages"
+ ],
+ "fields": [
+  {
+   "fieldname": "validation_case",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Validation Case",
+   "options": "HISI SHA Validation Case",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "vendor",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Vendor",
+   "options": "HISI Vendor Organization",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "Queued",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Queued\nRunning\nCompleted\nFailed\nCancelled"
+  },
+  {
+   "fieldname": "environment_url",
+   "fieldtype": "Data",
+   "label": "Environment URL",
+   "reqd": 1
+  },
+  {
+   "fieldname": "synthetic_pack",
+   "fieldtype": "Data",
+   "label": "Synthetic Fixture Pack"
+  },
+  {
+   "fieldname": "release_version",
+   "fieldtype": "Data",
+   "label": "Release Version"
+  },
+  {
+   "fieldname": "column_break_run",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "started_by",
+   "fieldtype": "Link",
+   "label": "Started By",
+   "options": "User"
+  },
+  {
+   "fieldname": "started_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Started On"
+  },
+  {
+   "fieldname": "completed_on",
+   "fieldtype": "Datetime",
+   "label": "Completed On"
+  },
+  {
+   "fieldname": "cancelled_by",
+   "fieldtype": "Link",
+   "label": "Cancelled By",
+   "options": "User"
+  },
+  {
+   "fieldname": "stages_section",
+   "fieldtype": "Section Break",
+   "label": "Journey Stages"
+  },
+  {
+   "fieldname": "stages",
+   "fieldtype": "Table",
+   "label": "Stages",
+   "options": "HISI Test Run Stage"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Test Run",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HISI Administrator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Technical/API Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Clinical/Claims Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Decision Authority"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Auditor / Observer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HMIS Vendor Administrator"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Technical Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Clinical / Operations Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

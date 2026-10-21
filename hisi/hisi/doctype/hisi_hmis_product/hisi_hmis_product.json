@@ -44,7 +44,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-17 00:00:00.000000",
+ "modified": "2026-10-21 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "hisi",
  "name": "HISI HMIS Product",
@@ -63,11 +63,65 @@
    "write": 1
   },
   {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
    "read": 1,
+   "report": 1,
+   "role": "HISI Administrator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Technical/API Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Clinical/Claims Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Decision Authority"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Auditor / Observer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HMIS Vendor Administrator"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Technical Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Clinical / Operations Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
    "role": "HISI Reviewer"
   },
   {
    "read": 1,
+   "report": 1,
    "role": "HISI Vendor"
   }
  ],

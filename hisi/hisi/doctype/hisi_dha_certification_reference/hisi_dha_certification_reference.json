@@ -17,7 +17,9 @@
   "verification_method",
   "verified_on",
   "verified_by",
-  "verification_note"
+  "verification_note",
+  "scope_type",
+  "verifier_source"
  ],
  "fields": [
   {
@@ -54,7 +56,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Certificate Status",
-   "options": "Valid\nConditional\nExpired\nSuspended\nUnknown"
+   "options": "Valid\nPending verification\nConditional\nExpired\nSuspended\nUnknown"
   },
   {
    "fieldname": "issue_date",
@@ -92,11 +94,23 @@
    "fieldname": "verification_note",
    "fieldtype": "Small Text",
    "label": "Verification Note"
+  },
+  {
+   "default": "First-round DHA HMIS Certification (Published)",
+   "fieldname": "scope_type",
+   "fieldtype": "Data",
+   "label": "Scope Type"
+  },
+  {
+   "default": "DHA Public Register",
+   "fieldname": "verifier_source",
+   "fieldtype": "Data",
+   "label": "Verifier Source"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-17 00:00:00.000000",
+ "modified": "2026-10-21 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "hisi",
  "name": "HISI DHA Certification Reference",
@@ -115,11 +129,65 @@
    "write": 1
   },
   {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
    "read": 1,
+   "report": 1,
+   "role": "HISI Administrator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Technical/API Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Clinical/Claims Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Decision Authority"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Auditor / Observer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HMIS Vendor Administrator"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Technical Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Clinical / Operations Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
    "role": "HISI Reviewer"
   },
   {
    "read": 1,
+   "report": 1,
    "role": "HISI Vendor"
   }
  ],

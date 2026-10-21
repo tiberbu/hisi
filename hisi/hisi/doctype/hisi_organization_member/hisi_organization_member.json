@@ -5,7 +5,8 @@
  "engine": "InnoDB",
  "field_order": [
   "user",
-  "member_role"
+  "member_role",
+  "status"
  ],
  "fields": [
   {
@@ -23,12 +24,21 @@
    "in_list_view": 1,
    "label": "Member Role",
    "options": "Vendor Administrator\nVendor Technical Lead\nVendor Clinical / Operations Lead"
+  },
+  {
+   "default": "Active",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Active\nPending approval\nSuspended",
+   "reqd": 1
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-10-17 00:00:00.000000",
+ "modified": "2026-10-21 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "hisi",
  "name": "HISI Organization Member",

@@ -5,6 +5,33 @@ app_description = "Health Information System Interoperability"
 app_email = "salim@tiberbu.com"
 app_license = "mit"
 
+# HISI domain wiring
+# ------------------
+# Roles and the published SHA checklist are provisioned idempotently.
+after_install = "hisi.setup.install.after_install"
+after_migrate = "hisi.setup.install.after_migrate"
+
+# Row-level scoping: vendor users only ever see their own organization's
+# records (CWE-639 / CWE-285). See hisi/permissions.py (keep in sync with _ORG_FIELD).
+ORG_SCOPED_DOCTYPES = (
+	"HISI Vendor Organization",
+	"HISI HMIS Product",
+	"HISI DHA Certification Reference",
+	"HISI SHA Validation Case",
+	"HISI Test Run",
+	"HISI Evidence Item",
+	"HISI Finding",
+	"HISI Facility Scope",
+	"HISI Integration Profile",
+	"HISI SHA Disposition",
+)
+
+has_permission = {doctype: "hisi.permissions.has_permission" for doctype in ORG_SCOPED_DOCTYPES}
+
+permission_query_conditions = {
+	doctype: "hisi.permissions.get_permission_query_conditions" for doctype in ORG_SCOPED_DOCTYPES
+}
+
 # Apps
 # ------------------
 
@@ -255,4 +282,3 @@ app_license = "mit"
 # ------------
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
-

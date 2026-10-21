@@ -18,7 +18,15 @@
   "current_owner",
   "next_action",
   "assessments_section",
-  "criteria_assessments"
+  "criteria_assessments",
+  "scenario_version",
+  "scope_notes",
+  "latest_run",
+  "disposition_section",
+  "sha_disposition",
+  "disposition_record",
+  "disposition_issued_on",
+  "disposition_issued_by"
  ],
  "fields": [
   {
@@ -107,11 +115,60 @@
    "fieldtype": "Table",
    "label": "Criteria Assessments",
    "options": "HISI Case Criterion Assessment"
+  },
+  {
+   "default": "JOURNEY-2026.10-R1",
+   "fieldname": "scenario_version",
+   "fieldtype": "Data",
+   "label": "Scenario Version"
+  },
+  {
+   "fieldname": "scope_notes",
+   "fieldtype": "Small Text",
+   "label": "Scope Notes"
+  },
+  {
+   "fieldname": "latest_run",
+   "fieldtype": "Link",
+   "label": "Latest Test Run",
+   "options": "HISI Test Run",
+   "read_only": 1
+  },
+  {
+   "fieldname": "disposition_section",
+   "fieldtype": "Section Break",
+   "label": "SHA Claims Validation Disposition"
+  },
+  {
+   "fieldname": "sha_disposition",
+   "fieldtype": "Data",
+   "label": "SHA Disposition",
+   "read_only": 1
+  },
+  {
+   "fieldname": "disposition_record",
+   "fieldtype": "Link",
+   "label": "Disposition Record",
+   "options": "HISI SHA Disposition",
+   "read_only": 1
+  },
+  {
+   "fieldname": "disposition_issued_on",
+   "fieldtype": "Datetime",
+   "label": "Disposition Issued On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "disposition_issued_by",
+   "fieldtype": "Link",
+   "label": "Disposition Issued By",
+   "options": "User",
+   "read_only": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-17 00:00:00.000000",
+ "modified": "2026-10-21 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "hisi",
  "name": "HISI SHA Validation Case",
@@ -130,11 +187,65 @@
    "write": 1
   },
   {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
    "read": 1,
+   "report": 1,
+   "role": "HISI Administrator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Technical/API Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Clinical/Claims Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Decision Authority"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Auditor / Observer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HMIS Vendor Administrator"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Technical Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Clinical / Operations Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
    "role": "HISI Reviewer"
   },
   {
    "read": 1,
+   "report": 1,
    "role": "HISI Vendor"
   }
  ],
