@@ -1,0 +1,235 @@
+{
+ "actions": [],
+ "autoname": "format:EV-{YYYY}-{#####}",
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "validation_case",
+  "vendor",
+  "criterion_id",
+  "trace_key",
+  "title",
+  "scenario",
+  "product_version",
+  "environment",
+  "column_break_ev",
+  "review_status",
+  "reviewer_note",
+  "reviewed_by",
+  "submitted_by",
+  "captured_at",
+  "checksum",
+  "details_section",
+  "description",
+  "video_reference"
+ ],
+ "fields": [
+  {
+   "fieldname": "validation_case",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Validation Case",
+   "options": "HISI SHA Validation Case",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "vendor",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Vendor",
+   "options": "HISI Vendor Organization",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "criterion_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Criterion",
+   "reqd": 1
+  },
+  {
+   "fieldname": "trace_key",
+   "fieldtype": "Data",
+   "label": "Trace Key"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "scenario",
+   "fieldtype": "Data",
+   "label": "Scenario",
+   "reqd": 1
+  },
+  {
+   "fieldname": "product_version",
+   "fieldtype": "Data",
+   "label": "Product Version",
+   "reqd": 1
+  },
+  {
+   "fieldname": "environment",
+   "fieldtype": "Data",
+   "label": "Environment",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_ev",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending review",
+   "fieldname": "review_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Review Status",
+   "options": "Pending review\nAccepted\nInsufficient\nRejected"
+  },
+  {
+   "fieldname": "reviewer_note",
+   "fieldtype": "Small Text",
+   "label": "Reviewer Note"
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User"
+  },
+  {
+   "fieldname": "submitted_by",
+   "fieldtype": "Link",
+   "label": "Submitted By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "captured_at",
+   "fieldtype": "Datetime",
+   "label": "Captured At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "checksum",
+   "fieldtype": "Data",
+   "label": "SHA-256 Checksum",
+   "read_only": 1
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description",
+   "reqd": 1
+  },
+  {
+   "fieldname": "video_reference",
+   "fieldtype": "Data",
+   "label": "Video Reference",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Evidence Item",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HISI Administrator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Technical/API Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Clinical/Claims Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Decision Authority"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Auditor / Observer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HMIS Vendor Administrator"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Technical Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Clinical / Operations Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 0,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

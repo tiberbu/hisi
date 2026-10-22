@@ -10,13 +10,55 @@ yet and never mutates existing ones.
 import frappe
 
 CRITERIA = [
-	("CC-01", "Pre-Certification Gap Identification", "Structured intake and SHA validation/testing before sign-off; all critical defects must be resolved before sign-off.", "Intake record, test plan, gap register", 1),
-	("CC-02", "Uniform Benefits Matrix & Access Rules", "HIE/SHA benefit and access-rule fixtures and claim/preauthorization assertions.", "API assertions, benefit-rule response evidence", 1),
-	("CC-03", "Standardized Patient Journey Capture", "Journey API checks, Visit ID propagation, clinical evidence and claim traceability.", "API journey trace, video evidence", 1),
-	("CC-04", "User Capacity & Training", "Structured, validated in-person/hybrid training plan for relevant facility and hospital user roles; completion and reviewer evidence.", "Training plan, completion evidence", 0),
-	("CC-05", "Minimum Integration Requirements", "API preflight, supported profiles, security, required integrations and data exchange.", "Preflight report, configuration evidence", 1),
-	("CC-06", "Claims & Patient Journey Visibility", "Claim/notification correlation, status progression and facility/platform-level views.", "Visibility review, API correlation trace", 0),
-	("CC-07", "Authorizations and Claims Tracking", "Authorization and preauthorization lifecycle, claim linkage, submission and response tracking.", "API lifecycle trace", 1),
+	(
+		"CC-01",
+		"Pre-Certification Gap Identification",
+		"Structured intake and SHA validation/testing before sign-off; all critical defects must be resolved before sign-off.",
+		"Intake record, test plan, gap register",
+		1,
+	),
+	(
+		"CC-02",
+		"Uniform Benefits Matrix & Access Rules",
+		"HIE/SHA benefit and access-rule fixtures and claim/preauthorization assertions.",
+		"API assertions, benefit-rule response evidence",
+		1,
+	),
+	(
+		"CC-03",
+		"Standardized Patient Journey Capture",
+		"Journey API checks, Visit ID propagation, clinical evidence and claim traceability.",
+		"API journey trace, video evidence",
+		1,
+	),
+	(
+		"CC-04",
+		"User Capacity & Training",
+		"Structured, validated in-person/hybrid training plan for relevant facility and hospital user roles; completion and reviewer evidence.",
+		"Training plan, completion evidence",
+		0,
+	),
+	(
+		"CC-05",
+		"Minimum Integration Requirements",
+		"API preflight, supported profiles, security, required integrations and data exchange.",
+		"Preflight report, configuration evidence",
+		1,
+	),
+	(
+		"CC-06",
+		"Claims & Patient Journey Visibility",
+		"Claim/notification correlation, status progression and facility/platform-level views.",
+		"Visibility review, API correlation trace",
+		0,
+	),
+	(
+		"CC-07",
+		"Authorizations and Claims Tracking",
+		"Authorization and preauthorization lifecycle, claim linkage, submission and response tracking.",
+		"API lifecycle trace",
+		1,
+	),
 ]
 
 

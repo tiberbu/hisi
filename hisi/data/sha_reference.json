@@ -1,0 +1,498 @@
+{
+ "criteria": [
+  {
+   "id": "CC-01",
+   "title": "Pre-Certification Gap Identification",
+   "coverage": "Structured intake and SHA validation/testing before sign-off; all critical defects must be resolved before sign-off.",
+   "evidenceMode": "Mixed",
+   "mandatoryBlocker": true,
+   "automatedStatus": "Waiting",
+   "owner": "SHA Validation Reviewer",
+   "rationale": "Awaiting initial intake and autonomous preflight run."
+  },
+  {
+   "id": "CC-02",
+   "title": "Uniform Benefits Matrix & Access Rules",
+   "coverage": "HIE (Health Information Exchange) and SHA benefit and access-rule fixtures and claim/preauthorization assertions.",
+   "evidenceMode": "API",
+   "mandatoryBlocker": true,
+   "automatedStatus": "Waiting",
+   "owner": "Technical/API Reviewer",
+   "rationale": "Requires isolated test instance connection to run benefit matrix fixtures."
+  },
+  {
+   "id": "CC-03",
+   "title": "Standardized Patient Journey Capture",
+   "coverage": "Journey API checks, Visit ID propagation, clinical evidence and claim traceability.",
+   "evidenceMode": "Mixed",
+   "mandatoryBlocker": true,
+   "automatedStatus": "Waiting",
+   "owner": "Clinical/Claims Reviewer",
+   "rationale": "Covers registration, SHR Visit ID assignment, clinical encounters and Kenya Patient Summary linkage."
+  },
+  {
+   "id": "CC-04",
+   "title": "User Capacity & Training",
+   "coverage": "Structured, validated in-person/hybrid plan for relevant facility and hospital user roles; track completion and reviewer evidence.",
+   "evidenceMode": "Manual/video",
+   "mandatoryBlocker": false,
+   "automatedStatus": "Skipped",
+   "owner": "Vendor Clinical / Operations Lead",
+   "rationale": "Submit structured training plan and role completion evidence; completion is verified by reviewer."
+  },
+  {
+   "id": "CC-05",
+   "title": "Minimum Integration Requirements",
+   "coverage": "Automated system check preflight, supported profiles, security, required integrations and data exchange.",
+   "evidenceMode": "API",
+   "mandatoryBlocker": true,
+   "automatedStatus": "Waiting",
+   "owner": "Vendor Technical Lead",
+   "rationale": "Connect isolated test environment to verify TLS, scopes, FHIR ke-kps-patient profile and SHR staging."
+  },
+  {
+   "id": "CC-06",
+   "title": "Claims & Patient Journey Visibility",
+   "coverage": "Claim/notification correlation, status progression and facility/platform-level views.",
+   "evidenceMode": "Mixed",
+   "mandatoryBlocker": false,
+   "automatedStatus": "Waiting",
+   "owner": "SHA Validation Reviewer",
+   "rationale": "Assesses end-to-end claim submission, adjudication stage correlation and facility visibility."
+  },
+  {
+   "id": "CC-07",
+   "title": "Authorizations and Claims Tracking",
+   "coverage": "Authorization and preauthorization lifecycle, claim linkage, submission and response tracking.",
+   "evidenceMode": "API",
+   "mandatoryBlocker": true,
+   "automatedStatus": "Waiting",
+   "owner": "Technical/API Reviewer",
+   "rationale": "Verifies single-use preauthorization tokens, consumed-token rejection and claim state tracking."
+  }
+ ],
+ "journeyStages": [
+  {
+   "stageNumber": 0,
+   "code": "STAGE-00",
+   "title": "Environment and identity preflight",
+   "autonomousChecks": "Test instance identity, supported release, credentials/scopes, connectivity, encryption, fixture reset, synthetic-data marker, safe target allowlist.",
+   "traceability": [
+    "CC-05",
+    "IG-01"
+   ],
+   "observedResult": "No test instance connected yet",
+   "expectedResult": "TLS verified, synthetic fixture pack loaded, target allowlist confirmed",
+   "correlationId": "PREFLIGHT-00"
+  },
+  {
+   "stageNumber": 1,
+   "code": "STAGE-01",
+   "title": "Patient registration and identity",
+   "autonomousChecks": "Register/find synthetic patient; validate CR number where required; exercise consent and configured OTP/identity proof at registration; ensure identity is not duplicated.",
+   "traceability": [
+    "CC-03",
+    "AD-03",
+    "IG-01"
+   ],
+   "observedResult": "Waiting for preflight",
+   "expectedResult": "Synthetic CR patient resolved without duplicate registration",
+   "correlationId": "JOURNEY-01"
+  },
+  {
+   "stageNumber": 2,
+   "code": "STAGE-02",
+   "title": "Visit creation",
+   "autonomousChecks": "Obtain centrally assigned Visit ID from SHR before journey; retain it as a correlation key and confirm it is present in subsequent clinical documents.",
+   "traceability": [
+    "CC-03",
+    "DI-03-A"
+   ],
+   "observedResult": "Waiting for patient registration",
+   "expectedResult": "Authoritative SHR Visit ID issued and bound to encounter context",
+   "correlationId": "JOURNEY-02"
+  },
+  {
+   "stageNumber": 3,
+   "code": "STAGE-03",
+   "title": "Eligibility, benefits and access",
+   "autonomousChecks": "Query the configured HIE/SHA benefit/access source; validate entitlement, facility/service rules and response handling using approved fixtures.",
+   "traceability": [
+    "CC-02",
+    "CC-05"
+   ],
+   "observedResult": "Waiting for visit creation",
+   "expectedResult": "Uniform benefits matrix rules and facilityKEPH level entitlements enforced",
+   "correlationId": "JOURNEY-03"
+  },
+  {
+   "stageNumber": 4,
+   "code": "STAGE-04",
+   "title": "Authorization and preauthorization",
+   "autonomousChecks": "Create/read decision, validate authorization state and token; test single use, scope, patient/visit linkage and consumed-token rejection.",
+   "traceability": [
+    "CC-07",
+    "PA-01",
+    "CP-04"
+   ],
+   "observedResult": "Waiting for benefit check",
+   "expectedResult": "Single-use token accepted once; replay attempt rejected with audit record",
+   "correlationId": "JOURNEY-04"
+  },
+  {
+   "stageNumber": 5,
+   "code": "STAGE-05",
+   "title": "Clinical encounter and orders",
+   "autonomousChecks": "Create structured encounter/progress/surgical notes; check required sections; create orders; ensure encounter and order IDs can be traced to visit and later claim lines.",
+   "traceability": [
+    "CC-03",
+    "C-01",
+    "C-02",
+    "C-03",
+    "C-04"
+   ],
+   "observedResult": "Waiting for authorization",
+   "expectedResult": "Structured clinical notes signed; immutable audit trail and order lineage verified",
+   "correlationId": "JOURNEY-05"
+  },
+  {
+   "stageNumber": 6,
+   "code": "STAGE-06",
+   "title": "Admission, care, pharmacy and discharge",
+   "autonomousChecks": "Check system-derived admission/discharge times and bed occupancy; enforce bed-night condition; reconcile dispensed medication, stock batch and formulary/quantity; confirm discharge identity/OTP.",
+   "traceability": [
+    "CC-03",
+    "AD-01",
+    "AD-03",
+    "DI-04",
+    "CP-02",
+    "PS-01",
+    "PS-02"
+   ],
+   "observedResult": "Waiting for clinical encounter",
+   "expectedResult": "Bed-night boundary enforced; pharmacy stock batch and formulary limits reconciled",
+   "correlationId": "JOURNEY-06"
+  },
+  {
+   "stageNumber": 7,
+   "code": "STAGE-07",
+   "title": "Claim assembly and validation",
+   "autonomousChecks": "Build claim from native clinical records; validate Visit ID and patient summary; re-derive dates; validate duplicate, tariff, bundling, preauthorization, procedure authorization and location.",
+   "traceability": [
+    "CC-02",
+    "CC-03",
+    "CC-07",
+    "DI-01",
+    "DI-03-B",
+    "C-02",
+    "C-03",
+    "C-05",
+    "CP-01",
+    "CP-03",
+    "CP-04",
+    "AD-02",
+    "PA-01"
+   ],
+   "observedResult": "Waiting for discharge checks",
+   "expectedResult": "Claim lines trace 1:1 to clinical orders; unbundled or duplicate lines blocked",
+   "correlationId": "JOURNEY-07"
+  },
+  {
+   "stageNumber": 8,
+   "code": "STAGE-08",
+   "title": "FHIR summary and SHR exchange",
+   "autonomousChecks": "Generate a machine-readable Kenya Patient Summary (ke-kps-patient profile) for every claim; validate required patient/summary resources and Visit ID; submit or stage referenced resources to SHR.",
+   "traceability": [
+    "CC-03",
+    "CC-05",
+    "DI-01",
+    "DI-03-A"
+   ],
+   "observedResult": "Waiting for claim assembly",
+   "expectedResult": "Valid ke-kps-patient FHIR bundle staged with matching SHR Visit ID",
+   "correlationId": "JOURNEY-08"
+  },
+  {
+   "stageNumber": 9,
+   "code": "STAGE-09",
+   "title": "Claim submission and response",
+   "autonomousChecks": "Submit to the designated sandbox; correlate acknowledgment, adjudication/processing stage and notification; test duplicate handling and preserve response/status transitions.",
+   "traceability": [
+    "CC-06",
+    "CC-07",
+    "C-05"
+   ],
+   "observedResult": "Waiting for FHIR summary exchange",
+   "expectedResult": "Sandbox claim acknowledged; duplicate replay rejected; notification correlated",
+   "correlationId": "JOURNEY-09"
+  },
+  {
+   "stageNumber": 10,
+   "code": "STAGE-10",
+   "title": "End-to-end visibility",
+   "autonomousChecks": "Confirm patient/visit, authorization, claim, response and notification can be traced in a facility/platform-level view and can support an assigned case review.",
+   "traceability": [
+    "CC-06",
+    "CC-07"
+   ],
+   "observedResult": "Waiting for claim submission",
+   "expectedResult": "Complete patient journey and claim status visible across facility trace view",
+   "correlationId": "JOURNEY-10"
+  }
+ ],
+ "fraudControls": [
+  {
+   "traceKey": "DI-01",
+   "sourceId": "DI-01",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "Every claim has a machine-readable Kenya Patient Summary (ke-kps-patient); required clinical context is present and valid CR number is handled.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API/FHIR validation + claim-to-summary link",
+   "linkedCriteria": [
+    "CC-03",
+    "CC-05"
+   ]
+  },
+  {
+   "traceKey": "DI-03-A",
+   "sourceId": "DI-03 (visit linkage row)",
+   "sourceAnnotation": "NEW",
+   "outcomeToVerify": "SHR assigns a Visit ID before the journey; clinical documents and printable IPS/claim artifacts reference it; required FHIR resources are submitted/staged to SHR.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API/cross-resource assertions + document output",
+   "linkedCriteria": [
+    "CC-03",
+    "CC-05"
+   ]
+  },
+  {
+   "traceKey": "DI-03-B",
+   "sourceId": "DI-03 (claim dates row)",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "Claim/preauth dates are derived from the clinical source of truth; future end-date, overlap and duplicate-date cases are handled and corrections are auditable.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API fixture cases + audit evidence",
+   "linkedCriteria": [
+    "CC-03",
+    "CC-07"
+   ]
+  },
+  {
+   "traceKey": "DI-04",
+   "sourceId": "DI-04",
+   "sourceAnnotation": "Retained – evidenced",
+   "outcomeToVerify": "Inpatient claim is blocked where admission and discharge do not cross at least one full bed-night, according to approved date/time policy.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API boundary cases + reviewer check",
+   "linkedCriteria": [
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "C-01",
+   "sourceId": "C-01",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "Clinical surgical/progress documentation requires configured structured sections before claim workflow proceeds.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API field validation + video if UI behavior is required",
+   "linkedCriteria": [
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "C-02",
+   "sourceId": "C-02",
+   "sourceAnnotation": "NEW",
+   "outcomeToVerify": "Claim cannot rely only on external/paper notes where native HMIS documentation is required; required native record/supporting summary is linked.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API linkage + manual workflow demonstration",
+   "linkedCriteria": [
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "C-03",
+   "sourceId": "C-03",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "Claim line items trace to clinical encounters/orders; unauthorized freehand line creation or mismatched mappings are blocked or flagged per approved rule.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API lineage assertions + manual UI check",
+   "linkedCriteria": [
+    "CC-03",
+    "CC-07"
+   ]
+  },
+  {
+   "traceKey": "C-04",
+   "sourceId": "C-04",
+   "sourceAnnotation": "Retained – evidenced",
+   "outcomeToVerify": "Signed/locked notes cannot be silently changed; amendments preserve original, author, time and lineage.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API mutation/boundary tests + audit trail",
+   "linkedCriteria": [
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "C-05",
+   "sourceId": "C-05",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "Duplicate encounter/claim submission is detected for the approved patient/provider/time-window rules and produces a traceable outcome.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API duplicate/replay tests",
+   "linkedCriteria": [
+    "CC-06",
+    "CC-07"
+   ]
+  },
+  {
+   "traceKey": "CP-01",
+   "sourceId": "CP-01",
+   "sourceAnnotation": "NEW",
+   "outcomeToVerify": "Procedure coding is constrained by verified diagnosis/order and authorized role; unauthorized higher code selection is blocked or escalated.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API authorization tests + video for user interaction",
+   "linkedCriteria": [
+    "CC-02",
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "CP-02",
+   "sourceId": "CP-02",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "Ward/per-diem charges reconcile to bed assignment/occupancy evidence; manual tariff substitution cannot silently override the derived amount.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API calculation cases + audit evidence",
+   "linkedCriteria": [
+    "CC-02",
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "CP-03",
+   "sourceId": "CP-03",
+   "sourceAnnotation": "NEW",
+   "outcomeToVerify": "Approved procedure package rules collapse the defined component codes into the intended bundled code without duplicate billing.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API test cases + versioned mapping evidence",
+   "linkedCriteria": [
+    "CC-02"
+   ]
+  },
+  {
+   "traceKey": "CP-04",
+   "sourceId": "CP-04",
+   "sourceAnnotation": "Retained – evidenced",
+   "outcomeToVerify": "Configured advanced imaging/specialized lab claim is blocked without valid approved preauthorization.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API policy/claim tests",
+   "linkedCriteria": [
+    "CC-07"
+   ]
+  },
+  {
+   "traceKey": "AD-01",
+   "sourceId": "AD-01",
+   "sourceAnnotation": "Retained – evidenced",
+   "outcomeToVerify": "Admission/discharge timestamps use system-of-record values; changes require authorized, justified and audited override.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API boundary tests + audit evidence",
+   "linkedCriteria": [
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "AD-02",
+   "sourceId": "AD-02",
+   "sourceAnnotation": "NEW",
+   "outcomeToVerify": "Facility location is validated for preauthorization/claim workflows according to approved geo-source, radius and failure policy.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API location fixtures + reviewer evidence",
+   "linkedCriteria": [
+    "CC-05",
+    "CC-07"
+   ]
+  },
+  {
+   "traceKey": "AD-03",
+   "sourceId": "AD-03",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "Configured patient identity/OTP/biometric checks occur at required registration and discharge points; claim posting cannot substitute for discharge verification.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API flow + video for physical/user action",
+   "linkedCriteria": [
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "PS-01",
+   "sourceId": "PS-01",
+   "sourceAnnotation": "NEW",
+   "outcomeToVerify": "Dispensed/claimed medicines reconcile to stock movement, batch and return/reconciliation records.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API data lineage + sample video",
+   "linkedCriteria": [
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "PS-02",
+   "sourceId": "PS-02",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "Formulary and quantity limits are versioned and applied to prescribing/claim workflows, including approved exception paths.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API boundary tests + formulary artifact",
+   "linkedCriteria": [
+    "CC-02",
+    "CC-03"
+   ]
+  },
+  {
+   "traceKey": "IG-01",
+   "sourceId": "IG-01",
+   "sourceAnnotation": "Strengthened",
+   "outcomeToVerify": "SSO/MFA and provider/practitioner identity controls are active as required by approved policy; test impersonation/shared-credential cases are rejected or detected.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API/security evidence + configuration proof/video",
+   "linkedCriteria": [
+    "CC-05"
+   ]
+  },
+  {
+   "traceKey": "IG-02",
+   "sourceId": "IG-02",
+   "sourceAnnotation": "NEW",
+   "outcomeToVerify": "Role-to-task rules prevent users from creating/signing clinical records outside their assigned professional scope.",
+   "suggestedEvidence": "Mixed",
+   "evidenceDetail": "API authorization tests + role matrix/video",
+   "linkedCriteria": [
+    "CC-03",
+    "CC-04"
+   ]
+  },
+  {
+   "traceKey": "IG-03",
+   "sourceId": "IG-03",
+   "sourceAnnotation": "Retained – evidenced",
+   "outcomeToVerify": "Post-claim changes/overrides record actor, time, before/after context and required reason; unauthorized changes are blocked.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API role tests + immutable audit evidence",
+   "linkedCriteria": [
+    "CC-06",
+    "CC-07"
+   ]
+  },
+  {
+   "traceKey": "PA-01",
+   "sourceId": "PA-01",
+   "sourceAnnotation": "NEW",
+   "outcomeToVerify": "A preauthorization token is single-use and cannot be reused across claims; rejected attempts remain visible.",
+   "suggestedEvidence": "API",
+   "evidenceDetail": "API replay/reuse tests",
+   "linkedCriteria": [
+    "CC-07"
+   ]
+  }
+ ]
+}

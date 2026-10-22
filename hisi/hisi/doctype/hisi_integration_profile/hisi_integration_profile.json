@@ -1,0 +1,188 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-10-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "vendor",
+  "system_name",
+  "release_version",
+  "sandbox_base_url",
+  "fhir_profile",
+  "column_break_ip",
+  "shr_visit_id_enabled",
+  "hie_benefit_query_enabled",
+  "auth_mode",
+  "preflight_status",
+  "last_verified",
+  "preflight_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "vendor",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Vendor",
+   "options": "HISI Vendor Organization",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "system_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "System Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "release_version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Release Version",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sandbox_base_url",
+   "fieldtype": "Data",
+   "label": "Sandbox Base URL",
+   "reqd": 1
+  },
+  {
+   "fieldname": "fhir_profile",
+   "fieldtype": "Data",
+   "label": "FHIR Profile",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_ip",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "shr_visit_id_enabled",
+   "fieldtype": "Check",
+   "label": "SHR Visit ID Enabled"
+  },
+  {
+   "fieldname": "hie_benefit_query_enabled",
+   "fieldtype": "Check",
+   "label": "HIE Benefit Query Enabled"
+  },
+  {
+   "fieldname": "auth_mode",
+   "fieldtype": "Data",
+   "label": "Auth Mode",
+   "reqd": 1
+  },
+  {
+   "default": "Not connected",
+   "fieldname": "preflight_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Preflight Status",
+   "options": "Not connected\nReady\nFailed"
+  },
+  {
+   "fieldname": "last_verified",
+   "fieldtype": "Datetime",
+   "label": "Last Verified",
+   "read_only": 1
+  },
+  {
+   "fieldname": "preflight_note",
+   "fieldtype": "Small Text",
+   "label": "Preflight Note",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Integration Profile",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HISI Administrator",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Technical/API Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Clinical/Claims Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "SHA Validation Decision Authority"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Auditor / Observer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HMIS Vendor Administrator"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Technical Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Vendor Clinical / Operations Lead"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 0,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "system_name",
+ "track_changes": 1
+}

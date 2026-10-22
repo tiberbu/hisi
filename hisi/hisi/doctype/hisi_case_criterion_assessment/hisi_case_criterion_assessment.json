@@ -10,7 +10,8 @@
   "assessment",
   "rationale",
   "assessed_by",
-  "assessed_on"
+  "assessed_on",
+  "automated_status"
  ],
  "fields": [
   {
@@ -56,12 +57,19 @@
    "fieldname": "assessed_on",
    "fieldtype": "Datetime",
    "label": "Assessed On"
+  },
+  {
+   "default": "Waiting",
+   "fieldname": "automated_status",
+   "fieldtype": "Select",
+   "label": "Automated Status",
+   "options": "Waiting\nRunning\nPass\nFail\nBlocked\nSkipped\nNeeds reviewer"
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-10-17 00:00:00.000000",
+ "modified": "2026-10-21 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "hisi",
  "name": "HISI Case Criterion Assessment",
