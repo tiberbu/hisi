@@ -7,6 +7,7 @@ Manager`` role here; the frontend route guard only controls presentation.
 """
 
 import frappe
+from frappe.model.workflow import WorkflowTransitionError, apply_workflow
 
 # The only role that defines the administrator separation.
 ADMIN_ROLE = "System Manager"
@@ -148,7 +149,15 @@ def acknowledge_validation(case_id: str, note: str = "") -> dict:
 	if not steps["total"] or steps["pending"] or steps["failed"]:
 		frappe.throw("Case is not ready for acknowledgement", frappe.ValidationError)
 
-	case.state = "Validation passed"
+	# The engine validates the transition (role + self-approval) and records
+	# the move to Validation passed with an audit comment.
+	try:
+		case = apply_workflow(case, "Record platform acknowledgement")
+	except WorkflowTransitionError:
+		frappe.throw(
+			f"Case {case.name} cannot be acknowledged from its current state ({case.state}).",
+			frappe.ValidationError,
+		)
 	case.acknowledged_by = user
 	case.acknowledged_on = frappe.utils.now()
 	case.acknowledgement_note = (note or "").strip()[:MAX_NOTE_LENGTH]

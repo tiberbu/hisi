@@ -19,6 +19,7 @@ case it sees or which certificate it may link.
 """
 
 import frappe
+from frappe.model.workflow import WorkflowTransitionError, apply_workflow, get_transitions
 
 from hisi.utils import get_dha_verify_url
 
@@ -51,31 +52,16 @@ MEMBER_ROLE_MAP = {
 }
 DEFAULT_MEMBER_DISPLAY_ROLE = "HMIS Vendor Administrator"
 
-# Where a newly linked workflow starts: the certificate is verified
-# server-side before the case is created, so scope confirmation is next.
-INITIAL_CASE_STATE = "Scope confirmation"
+# New cases insert at the workflow baseline; link_dha_certificate then
+# advances them through the engine to Scope confirmation (states and
+# transitions live in the "HISI SHA Validation Case Workflow" DocType).
+WORKFLOW_INITIAL_STATE = "Linked to DHA record"
 INITIAL_NEXT_ACTION = "Confirm scope and start technical checks"
 RUNNING_NEXT_ACTION = "Review autonomous run results"
-
-# States in which the evaluation "Proceed" action leads to the runner.
-RUNNABLE_STATES = {
-	"Linked to DHA record",
-	"Certificate verification pending",
-	"Certificate verified",
-	"Scope confirmation",
-	"Test plan review",
-	"Environment provisioning",
-	"Ready to test",
-}
-# States that no longer accept new test runs.
-NO_NEW_RUN_STATES = {
-	"Validation passed",
-	"Validation passed with findings",
-	"Not validated",
-	"Blocked",
-	"Closed",
-	"Surveillance active",
-}
+# Engine actions applied by the link flow, in order, after the insert.
+LINK_CHAIN_ACTIONS = ("Verify DHA certificate", "Confirm SHA scope")
+# Engine action that queues an autonomous run from any pre-test state.
+START_RUN_ACTION = "Start test run"
 
 
 def _session_user() -> str:
@@ -269,9 +255,29 @@ def _find_certificate(certificate_id: str):
 	return certificates[0] if certificates else None
 
 
-def _next_action_href(doc) -> str:
-	"""Where the evaluation "Proceed" action leads for this workflow state."""
-	return "/certification/run" if (doc.state or "") in RUNNABLE_STATES else "/certification"
+def _available_actions(doc) -> list[dict]:
+	"""Workflow actions the current user may apply to the case right now.
+
+	Derived from the engine's transition matrix filtered by role, so the
+	frontend only ever sees buttons the caller is allowed to press.
+	"""
+	transitions = get_transitions(doc)
+	seen: set[tuple[str, str]] = set()
+	actions: list[dict] = []
+	for transition in transitions:
+		key = (transition["action"], transition["next_state"])
+		if key in seen:
+			continue
+		seen.add(key)
+		actions.append({"action": transition["action"], "nextState": transition["next_state"]})
+	return actions
+
+
+def _next_action_href(available_actions: list[dict]) -> str:
+	"""Where the evaluation "Proceed" action leads for this workflow."""
+	if any(action["action"] in ("Start test run", "Start retest run") for action in available_actions):
+		return "/certification/run"
+	return "/certification"
 
 
 @frappe.whitelist()
@@ -346,11 +352,16 @@ def link_dha_certificate(
 				"release_version": release_version,
 				"scope": "SHA Digital Claims workflow",
 				"scope_notes": (scope_notes or "").strip(),
-				"state": INITIAL_CASE_STATE,
+				"state": WORKFLOW_INITIAL_STATE,
 				"current_owner": _member_display_role(user),
 				"next_action": INITIAL_NEXT_ACTION,
 			}
 		).insert()
+		# The certificate was verified against the register above, so the
+		# engine records both the verification and the scope confirmation
+		# as real transitions (with actor + timestamp comments).
+		for action in LINK_CHAIN_ACTIONS:
+			case = apply_workflow(case, action)
 	except Exception:
 		frappe.db.rollback(save_point="validation_link_certificate")
 		raise
@@ -386,11 +397,6 @@ def start_test_run(case_id: str, environment_url: str, synthetic_pack: str | Non
 				" Restore certification before starting a run.",
 				frappe.ValidationError,
 			)
-	if (case.state or "") in NO_NEW_RUN_STATES:
-		frappe.throw(
-			f"Case {case.name} is closed for new runs (state: {case.state}).",
-			frappe.ValidationError,
-		)
 	environment_url = (environment_url or "").strip()
 	if not environment_url:
 		frappe.throw("environment_url is required.", frappe.ValidationError)
@@ -398,6 +404,17 @@ def start_test_run(case_id: str, environment_url: str, synthetic_pack: str | Non
 	run_name = _next_sequential_name("HISI Test Run", "run_name", f"RUN-{frappe.utils.nowdate()[:4]}-")
 	frappe.db.savepoint("validation_start_run")
 	try:
+		# The engine validates the transition (state + role + self-approval)
+		# and records the move to Running with an audit comment.
+		try:
+			case = apply_workflow(case, START_RUN_ACTION)
+		except WorkflowTransitionError:
+			frappe.throw(
+				f"Case {case.name} is closed for new runs (state: {case.state}).",
+				frappe.ValidationError,
+			)
+		case.next_action = RUNNING_NEXT_ACTION
+		case.save()
 		run = frappe.get_doc(
 			{
 				"doctype": "HISI Test Run",
@@ -411,9 +428,6 @@ def start_test_run(case_id: str, environment_url: str, synthetic_pack: str | Non
 				"started_by": user,
 			}
 		).insert()
-		case.state = "Running"
-		case.next_action = RUNNING_NEXT_ACTION
-		case.save()
 	except Exception:
 		frappe.db.rollback(save_point="validation_start_run")
 		raise
@@ -434,6 +448,7 @@ def get_case_details(case_id: str | None = None) -> dict:
 	doc = _resolve_case(user, case_id)
 	if not doc:
 		return {"caseLinked": False, "dhaCertificate": _organization_certificate_payload(user)}
+	available_actions = _available_actions(doc)
 	return {
 		"caseLinked": True,
 		"caseId": doc.name,
@@ -442,7 +457,8 @@ def get_case_details(case_id: str | None = None) -> dict:
 		"shaState": doc.state or "",
 		"responsibleOwner": doc.current_owner or "",
 		"nextActionLabel": doc.next_action or "",
-		"nextActionHref": _next_action_href(doc),
+		"nextActionHref": _next_action_href(available_actions),
+		"availableActions": available_actions,
 		"dhaCertificate": _dha_certificate_payload(doc.dha_certificate),
 		"criteria": _criteria_payload(doc),
 	}

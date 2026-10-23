@@ -88,8 +88,11 @@ def run_demo_seed() -> list[str]:
 		).insert(ignore_if_duplicate=True)
 		created.append(f"checklist version {checklist.name!r}")
 
+	# Cases insert at the workflow baseline ("Linked to DHA record") and are
+	# then jumped to their demo state with a direct write: replaying every
+	# transition would need the actor roles the seed user does not hold.
 	if not frappe.get_list("HISI SHA Validation Case", limit=1):
-		frappe.get_doc(
+		case = frappe.get_doc(
 			{
 				"doctype": "HISI SHA Validation Case",
 				"case_name": "HCV-2026-0001",
@@ -99,15 +102,16 @@ def run_demo_seed() -> list[str]:
 				"checklist_version": CHECKLIST,
 				"release_version": "4.2.1",
 				"scope": "SHA Digital Claims workflow",
-				"state": "Ready to test",
+				"state": "Linked to DHA record",
 				"current_owner": frappe.session.user,
 				"next_action": "Start autonomous API checks",
 			}
 		).insert(ignore_if_duplicate=True)
+		frappe.db.set_value("HISI SHA Validation Case", case.name, "state", "Ready to test")
 		created.append("validation case 'HCV-2026-0001'")
 
 	if not frappe.db.exists("HISI SHA Validation Case", "HCV-2026-0002"):
-		frappe.get_doc(
+		case = frappe.get_doc(
 			{
 				"doctype": "HISI SHA Validation Case",
 				"case_name": "HCV-2026-0002",
@@ -117,11 +121,12 @@ def run_demo_seed() -> list[str]:
 				"checklist_version": CHECKLIST,
 				"release_version": "4.1.0",
 				"scope": "SHA outpatient claims workflow",
-				"state": "Manual review",
+				"state": "Linked to DHA record",
 				"current_owner": frappe.session.user,
 				"next_action": "Resolve failed criterion before acknowledgement",
 			}
 		).insert(ignore_if_duplicate=True)
+		frappe.db.set_value("HISI SHA Validation Case", case.name, "state", "Manual review")
 		created.append("validation case 'HCV-2026-0002'")
 
 	created.extend(_ensure_assessments("HCV-2026-0001", CHECKLIST, all_pass=True))

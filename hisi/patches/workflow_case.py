@@ -22,28 +22,29 @@ REVIEWER = "HISI Reviewer"
 PLATFORM = "System Manager"
 
 # Insert baseline must stay first: new cases start here and the link flow
-# advances them through the engine to Scope confirmation.
-STATES = [
-	"Linked to DHA record",
-	"Certificate verification pending",
-	"Certificate verified",
-	"Scope confirmation",
-	"Test plan review",
-	"Environment provisioning",
-	"Ready to test",
-	"Running",
-	"Results available",
-	"Manual review",
-	"Remediation required",
-	"Retest requested",
-	"SHA disposition review",
-	"Validation passed",
-	"Validation passed with findings",
-	"Not validated",
-	"Blocked",
-	"Surveillance active",
-	"Closed",
-]
+# advances them through the engine to Scope confirmation. Values are the
+# role allowed to edit the document while it sits in that state.
+STATES = {
+	"Linked to DHA record": VENDOR,
+	"Certificate verification pending": REVIEWER,
+	"Certificate verified": VENDOR,
+	"Scope confirmation": VENDOR,
+	"Test plan review": REVIEWER,
+	"Environment provisioning": VENDOR,
+	"Ready to test": VENDOR,
+	"Running": VENDOR,
+	"Results available": VENDOR,
+	"Manual review": REVIEWER,
+	"Remediation required": VENDOR,
+	"Retest requested": VENDOR,
+	"SHA disposition review": REVIEWER,
+	"Validation passed": REVIEWER,
+	"Validation passed with findings": REVIEWER,
+	"Not validated": REVIEWER,
+	"Blocked": REVIEWER,
+	"Surveillance active": REVIEWER,
+	"Closed": REVIEWER,
+}
 
 # States the admin acknowledgement API accepts today (any state may be
 # acknowledged once its criteria pass); "Validation passed" itself excluded.
@@ -136,10 +137,11 @@ def execute():
 			"workflow_state_field": STATE_FIELD,
 		}
 	)
+	state_names = list(STATES)
 	# states[0] is the insert baseline for new cases.
-	workflow.append("states", {"state": STATES[0], "doc_status": "0"})
-	for state in STATES[1:]:
-		workflow.append("states", {"state": state, "doc_status": "0"})
+	workflow.append("states", {"state": state_names[0], "doc_status": "0", "allow_edit": STATES[state_names[0]]})
+	for state in state_names[1:]:
+		workflow.append("states", {"state": state, "doc_status": "0", "allow_edit": STATES[state]})
 
 	for state, action, next_state, roles, self_ok in _graph_rows():
 		for role in roles:
