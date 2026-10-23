@@ -1,6 +1,25 @@
+import os
+
 import frappe
 
 PLATFORM_ROLES = ("System Manager", "HISI Reviewer")
+
+
+def get_dha_verify_url() -> str:
+	"""DHA register base URL: HISI Settings, then site config, then environment.
+
+	Returns ``""`` when nothing usable is configured so callers pick their own
+	failure mode (registration fails closed; deep links fall back to the public
+	portal). Fail-closed validation: only http(s) URLs without credentials or
+	a fragment are accepted.
+	"""
+	stored = (frappe.get_single("HISI Settings").get("dha_verify_url") or "").strip()
+	configured = stored or (frappe.conf.get("hisi_dha_verify_url") or os.environ.get("HISI_DHA_VERIFY_URL") or "").strip()
+	if not configured.startswith(("http://", "https://")):
+		return ""
+	if "@" in configured or "#" in configured:
+		return ""
+	return configured.rstrip("/")
 
 
 def is_platform_user(user: str | None = None) -> bool:

@@ -10,8 +10,12 @@ controls that Frappe actually enforces:
 Rules:
 - Guest: no access.
 - Platform roles (System Manager, HISI Reviewer): full access.
-- Vendor users: read-only, restricted to documents of their own organization
-  (membership recorded on HISI Vendor Organization > Members).
+- Vendor users: restricted to documents of their own organization (membership
+  recorded on HISI Vendor Organization > Members). Read everywhere allowed,
+  plus create/write on the SHA validation workflow documents (case and test
+  run) — still scoped to their own organization and further limited by the
+  DocType role permissions. Acknowledgement fields are guarded in the case
+  DocType's validate().
 """
 
 import frappe
@@ -24,6 +28,7 @@ _ORG_FIELD = {
 	"HISI HMIS Product": "vendor",
 	"HISI DHA Certification Reference": "vendor",
 	"HISI SHA Validation Case": "vendor",
+	"HISI Test Run": "vendor",
 }
 
 ORG_SCOPED_DOCTYPES = tuple(_ORG_FIELD)
@@ -37,12 +42,14 @@ def has_permission(doc, ptype, user=None):
 		return False
 	if is_platform_user(user):
 		return True
-	if ptype != "read":
+	# Vendors never delete or manage sharing; read/write/create fall through
+	# to the organization check below (role permissions gate the ptype too).
+	if ptype not in ("read", "write", "create"):
 		return False
 	org_field = _ORG_FIELD.get(doc.doctype)
 	if not org_field:
-		return True
-	return is_org_member(getattr(doc, org_field), user)
+		return ptype == "read"
+	return is_org_member(getattr(doc, org_field, None) or "", user)
 
 
 def get_permission_query_conditions(user=None, doctype: str | None = None):

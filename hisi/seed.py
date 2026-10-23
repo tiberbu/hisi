@@ -106,7 +106,142 @@ def run_demo_seed() -> list[str]:
 		).insert(ignore_if_duplicate=True)
 		created.append("validation case 'HCV-2026-0001'")
 
+	if not frappe.db.exists("HISI SHA Validation Case", "HCV-2026-0002"):
+		frappe.get_doc(
+			{
+				"doctype": "HISI SHA Validation Case",
+				"case_name": "HCV-2026-0002",
+				"vendor": ORG,
+				"product": PRODUCT,
+				"dha_certificate": CERT,
+				"checklist_version": CHECKLIST,
+				"release_version": "4.1.0",
+				"scope": "SHA outpatient claims workflow",
+				"state": "Manual review",
+				"current_owner": frappe.session.user,
+				"next_action": "Resolve failed criterion before acknowledgement",
+			}
+		).insert(ignore_if_duplicate=True)
+		created.append("validation case 'HCV-2026-0002'")
+
+	created.extend(_ensure_assessments("HCV-2026-0001", CHECKLIST, all_pass=True))
+	created.extend(_ensure_assessments("HCV-2026-0002", CHECKLIST, all_pass=False))
+
 	if created:
 		frappe.db.commit()
 		return created
 	return ["demo data already present; nothing created"]
+
+
+def _ensure_assessments(case_name: str, checklist: str, all_pass: bool) -> list[str]:
+	"""Seed criterion assessments for a demo case when it has none.
+
+	`all_pass=True` produces a case ready for platform acknowledgement;
+	`all_pass=False` leaves one failed and one unassessed criterion so the
+	administrator workspace has a not-ready case to show.
+	"""
+	if frappe.db.exists(
+		"HISI Case Criterion Assessment", {"parenttype": "HISI SHA Validation Case", "parent": case_name}
+	):
+		return []
+
+	criteria = frappe.get_all(
+		"HISI Checklist Criterion",
+		filters={"parenttype": "HISI Checklist Version", "parent": checklist},
+		fields=["criterion_id", "title", "is_critical"],
+		order_by="idx asc",
+	)
+	if not criteria:
+		return []
+
+	case = frappe.get_doc("HISI SHA Validation Case", case_name)
+	for index, criterion in enumerate(criteria):
+		if all_pass:
+			assessment = "Pass"
+			rationale = "Seeded passing assessment for demonstration."
+		elif index == len(criteria) - 1:
+			assessment = "Not assessed"
+			rationale = ""
+		elif index == 0:
+			assessment = "Fail"
+			rationale = "Seeded failing assessment so acknowledgement stays blocked."
+		else:
+			assessment = "Pass"
+			rationale = "Seeded passing assessment for demonstration."
+		case.append(
+			"criteria_assessments",
+			{
+				"criterion_id": criterion.criterion_id,
+				"criterion_title": criterion.title,
+				"is_critical": criterion.is_critical,
+				"assessment": assessment,
+				"rationale": rationale,
+				"assessed_by": frappe.session.user if assessment != "Not assessed" else None,
+				"assessed_on": frappe.utils.now() if assessment != "Not assessed" else None,
+			},
+		)
+	case.save()
+	return [f"{len(criteria)} criterion assessments on {case_name!r}"]
+
+
+VENDOR_USER = "vendor.test@example.com"
+VENDOR_ORG = "Test Vendor Ltd"
+VENDOR_PASSWORD = "root"
+
+
+def run_vendor_user_seed() -> list[str]:
+	"""Idempotent vendor sign-in fixture for local verification.
+
+	Creates the vendor user (role `HISI Vendor`, password `root`) and links
+	them to a vendor organization as `Vendor Administrator`, so
+	`hisi.api.account.get_my_profile` can be exercised for the vendor path.
+
+	Run with:
+	    bench --site <site> execute hisi.seed.run_vendor_user_seed
+	"""
+	created = []
+
+	if not frappe.db.exists("User", VENDOR_USER):
+		user = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": VENDOR_USER,
+				"first_name": "Vendy",
+				"last_name": "Tester",
+				"full_name": "Vendy Tester",
+				"send_welcome_email": 0,
+				"roles": [{"role": "HISI Vendor"}],
+			}
+		).insert(ignore_if_duplicate=True)
+		created.append(f"user {VENDOR_USER!r}")
+
+	from frappe.utils.password import update_password
+
+	update_password(VENDOR_USER, VENDOR_PASSWORD)
+
+	user_doc = frappe.get_doc("User", VENDOR_USER)
+	if not any(row.role == "HISI Vendor" for row in user_doc.roles):
+		user_doc.append("roles", {"role": "HISI Vendor"})
+		user_doc.save(ignore_permissions=True)
+		created.append("role 'HISI Vendor'")
+
+	if not frappe.db.exists("HISI Vendor Organization", VENDOR_ORG):
+		org = frappe.get_doc(
+			{
+				"doctype": "HISI Vendor Organization",
+				"organization_name": VENDOR_ORG,
+				"members": [{"user": VENDOR_USER, "member_role": "Vendor Administrator"}],
+			}
+		).insert(ignore_if_duplicate=True)
+		created.append(f"vendor organization {org.name!r}")
+	else:
+		org = frappe.get_doc("HISI Vendor Organization", VENDOR_ORG)
+		if not any(row.user == VENDOR_USER for row in org.members):
+			org.append("members", {"user": VENDOR_USER, "member_role": "Vendor Administrator"})
+			org.save(ignore_permissions=True)
+			created.append(f"membership for {VENDOR_USER!r}")
+
+	if created:
+		frappe.db.commit()
+		return created
+	return ["vendor fixture already present; nothing created"]

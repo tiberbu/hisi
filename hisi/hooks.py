@@ -126,13 +126,25 @@ app_license = "mit"
 # -----------
 # Permissions evaluated in scripted ways
 
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
-#
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+# Row-level access for organization-scoped documents (hisi/permissions.py):
+# platform roles see everything; vendor users are restricted to their own
+# organization's documents (the SHA validation workflow additionally allows
+# create/write within that scope).
+permission_query_conditions = {
+	"HISI Vendor Organization": "hisi.permissions.get_permission_query_conditions",
+	"HISI HMIS Product": "hisi.permissions.get_permission_query_conditions",
+	"HISI DHA Certification Reference": "hisi.permissions.get_permission_query_conditions",
+	"HISI SHA Validation Case": "hisi.permissions.get_permission_query_conditions",
+	"HISI Test Run": "hisi.permissions.get_permission_query_conditions",
+}
+
+has_permission = {
+	"HISI Vendor Organization": "hisi.permissions.has_permission",
+	"HISI HMIS Product": "hisi.permissions.has_permission",
+	"HISI DHA Certification Reference": "hisi.permissions.has_permission",
+	"HISI SHA Validation Case": "hisi.permissions.has_permission",
+	"HISI Test Run": "hisi.permissions.has_permission",
+}
 
 # Document Events
 # ---------------
