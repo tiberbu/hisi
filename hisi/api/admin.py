@@ -892,8 +892,10 @@ def update_admin_profile(full_name: str = "", phone_number: str = "", gender: st
 		doc.middle_name = " ".join(parts[1:-1]) if len(parts) > 2 else ""
 		doc.last_name = parts[-1] if len(parts) > 1 else ""
 		changed = True
-	if phone and doc.phone != phone:
-		doc.phone = phone
+	if phone and doc.mobile_no != phone:
+		# Frappe resolves phone-based logins against User.mobile_no, not the
+		# display-only User.phone field, so the login-capable one is written.
+		doc.mobile_no = phone
 		changed = True
 	if selected_gender and doc.gender != selected_gender:
 		doc.gender = selected_gender
@@ -904,7 +906,7 @@ def update_admin_profile(full_name: str = "", phone_number: str = "", gender: st
 	return APIResponse.success(data={
 		"email": user,
 		"fullName": doc.full_name or "",
-		"phoneNumber": doc.phone or "",
+		"phoneNumber": doc.mobile_no or "",
 		"gender": doc.gender or "",
 		"updated": changed,
 	})

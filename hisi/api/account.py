@@ -123,7 +123,7 @@ def get_my_profile() -> dict:
 	roles = list(frappe.get_roles(user))
 	user_row = (
 		frappe.db.get_value(
-			"User", user, ["full_name", "email", "phone", "gender", "last_login"], as_dict=True
+			"User", user, ["full_name", "email", "mobile_no", "gender", "last_login"], as_dict=True
 		)
 		or frappe._dict()
 	)
@@ -132,7 +132,7 @@ def get_my_profile() -> dict:
 	profile = {
 		"email": user_row.get("email") or user,
 		"fullName": user_row.get("full_name") or user,
-		"phoneNumber": user_row.get("phone") or "",
+		"phoneNumber": user_row.get("mobile_no") or "",
 		"gender": user_row.get("gender") or "",
 		"signInMethod": "Organization sign-in",
 		# User.last_login is a Read Only string ("YYYY-MM-DD HH:MM:SS").
