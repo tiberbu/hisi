@@ -3,6 +3,11 @@ import re
 import frappe
 from frappe.model.workflow import WorkflowTransitionError, apply_workflow
 
+try:
+	from hisi.api.response_handler import APIResponse, api_endpoint, BadRequest, Unauthorized, Forbidden, NotFound, Conflict, UpstreamError
+except ImportError as er:
+	raise str(er)
+
 ADMIN_ROLE = "System Manager"
 PASS_ASSESSMENTS = ("Pass", "Pass with observation")
 STATUS_JUDGEMENT_TYPES = ("Approve", "Reject", "Request More Info", "Other")
@@ -18,15 +23,16 @@ MAX_STATUS_LABEL_LENGTH = 140
 MAX_STATUS_DESCRIPTION_LENGTH = 500
 MAX_ACTION_LABEL_LENGTH = 64
 MAX_SORT_ORDER = 9999
+MAX_DISPLAY_NAME_LENGTH = 140
+PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9\s\-()]{4,19}$")
+GENDER_OPTIONS = ("Male", "Female")
 
-def _require_platform() -> str:
+def require_platform() -> str:
 	"""Return the session user, or throw when not a System Manager."""
 	user = frappe.session.user
 	if user == "Guest" or ADMIN_ROLE not in frappe.get_roles(user):
-		frappe.throw("Not authorized", frappe.PermissionError)
+		raise BadRequest("Not authorized")
 	return user
-
-
 def _rollup(rows) -> dict:
 	"""Criterion roll-up for one case: totals and pass/fail/pending counts."""
 	total = len(rows)
@@ -44,7 +50,6 @@ def _rollup(rows) -> dict:
 		"pending": pending,
 	}
 
-
 def _display_maps() -> tuple[dict, dict, dict]:
 	"""Vendor display names, product names and certificate IDs by document name."""
 	vendor_names = {
@@ -61,11 +66,10 @@ def _display_maps() -> tuple[dict, dict, dict]:
 	}
 	return vendor_names, product_names, certificate_ids
 
-
 @frappe.whitelist()
 def list_validation_cases() -> dict:
 	"""All SHA validation cases with vendor/product labels and criterion roll-ups."""
-	_require_platform()
+	require_platform()
 
 	cases = frappe.get_all(
 		"HISI SHA Validation Case",
@@ -134,13 +138,7 @@ def list_validation_cases() -> dict:
 
 @frappe.whitelist()
 def acknowledge_validation(case_id: str, note: str = "") -> dict:
-	"""Record platform acknowledgement that a fully passed case is accepted.
-
-	Only cases with at least one criterion and no pending or failed
-	assessments may be acknowledged; the state moves to "Validation passed"
-	with an audit trail (who, when, note).
-	"""
-	user = _require_platform()
+	user = require_platform()
 	if not case_id:
 		frappe.throw("case_id is required", frappe.ValidationError)
 
@@ -172,8 +170,7 @@ def acknowledge_validation(case_id: str, note: str = "") -> dict:
 		"acknowledgedOn": str(case.acknowledged_on)[:16],
 	}
 
-
-def _current_checklist():
+def current_checklist():
 	"""The published checklist version, else the most recently modified one."""
 	fields = ["name", "version", "effective_on", "published", "release_notes"]
 	published = frappe.get_all(
@@ -191,7 +188,7 @@ def _current_checklist():
 	return latest[0] if latest else None
 
 
-def _checklist_payload(row, criteria) -> dict:
+def checklist_payload(row, criteria) -> dict:
 	return {
 		"version": row.version if row else "",
 		"effectiveOn": (row.effective_on if row else None) or "",
@@ -199,7 +196,6 @@ def _checklist_payload(row, criteria) -> dict:
 		"releaseNotes": (row.release_notes if row else None) or "",
 		"criteria": criteria,
 	}
-
 
 def _criterion_payload(criterion) -> dict:
 	return {
@@ -212,12 +208,12 @@ def _criterion_payload(criterion) -> dict:
 
 
 @frappe.whitelist()
-def get_checklist() -> dict:
+def checklist() -> dict:
 	"""Currently configured checklist version and its criteria (read-only)."""
-	_require_platform()
-	row = _current_checklist()
+	require_platform()
+	row = current_checklist()
 	if not row:
-		return _checklist_payload(None, [])
+		return APIResponse.success(data=checklist_payload(None, []))
 
 	criteria = frappe.get_all(
 		"HISI Checklist Criterion",
@@ -225,7 +221,7 @@ def get_checklist() -> dict:
 		fields=["criterion_id", "title", "statement", "evidence_options", "is_critical"],
 		order_by="idx asc",
 	)
-	return _checklist_payload(row, [_criterion_payload(c) for c in criteria])
+	return APIResponse.success(data=checklist_payload(row, [_criterion_payload(c) for c in criteria]))
 
 
 def _next_version(current: str) -> str:
@@ -246,7 +242,7 @@ def save_checklist(criteria, release_notes: str = "") -> dict:
 	submitted criteria (minor bump), which becomes the configured checklist.
 	Cases keep their original checklist_version link untouched.
 	"""
-	_require_platform()
+	require_platform()
 	if isinstance(criteria, str):
 		criteria = frappe.parse_json(criteria)
 	if not isinstance(criteria, list) or not criteria:
@@ -274,7 +270,7 @@ def save_checklist(criteria, release_notes: str = "") -> dict:
 			}
 		)
 
-	row = _current_checklist()
+	row = current_checklist()
 	created_new_version = not row or bool(row.published)
 
 	if created_new_version:
@@ -305,9 +301,50 @@ def save_checklist(criteria, release_notes: str = "") -> dict:
 		fields=["criterion_id", "title", "statement", "evidence_options", "is_critical"],
 		order_by="idx asc",
 	)
-	payload = _checklist_payload(doc, [_criterion_payload(c) for c in criteria_rows])
+	payload = checklist_payload(doc, [_criterion_payload(c) for c in criteria_rows])
 	payload["createdNewVersion"] = created_new_version
 	return payload
+
+
+@frappe.whitelist()
+def overview() -> dict:
+	"""Platform overview for the administrator dashboard.
+
+	Total vendor organizations plus a count per configured (enabled) payer
+	validation status, and the number of organizations not judged yet.
+	Platform-gated.
+	"""
+	require_platform()
+	statuses = _status_map()
+	total = frappe.db.count("HISI Vendor Organization")
+	counts: dict[str, int] = {}
+	without_status = 0
+	for value, count in frappe.db.sql(
+		"SELECT COALESCE(payer_validation_status, ''), COUNT(*)"
+		" FROM `tabHISI Vendor Organization`"
+		" GROUP BY payer_validation_status"
+	):
+		if value:
+			counts[str(value)] = int(count)
+		else:
+			without_status = int(count)
+	by_status = [
+		{
+			"statusKey": row.status_key,
+			"label": row.label,
+			"judgementType": row.judgement_type,
+			"count": counts.get(row.name, 0),
+		}
+		for row in sorted(
+			(row for row in statuses.values() if row.enabled),
+			key=lambda r: (int(r.sort_order or 0), r.status_key),
+		)
+	]
+	return APIResponse.success(data={
+		"total": int(total),
+		"byStatus": by_status,
+		"withoutStatus": without_status,
+	})
 
 
 def _coerce_page(page, page_size) -> tuple[int, int]:
@@ -372,7 +409,7 @@ def list_checklist_statuses() -> dict:
 	enabled, which one starts the workflow and which statuses may follow
 	each one (empty list = terminal).
 	"""
-	_require_platform()
+	require_platform()
 	statuses = _status_map()
 	grouped = _transitions_by_status(list(statuses))
 	items = [
@@ -393,18 +430,10 @@ def list_checklist_statuses() -> dict:
 
 
 @frappe.whitelist()
-def list_vendor_validation_status(
+def vendor_validation_status(
 	page: int = 1, page_size: int = 20, status: str = "", search: str = ""
 ) -> dict:
-	"""Paginated vendor organizations with their payer validation status.
-
-	Sorted by the status's configured sort order (statuses needing attention
-	first when configured that way), then organization name; organizations
-	without a status sort last. Optionally filter by a single status_key or
-	search by organization name. Platform-gated; the Frappe route already
-	limits callers to a session, and this method enforces the admin role.
-	"""
-	_require_platform()
+	require_platform()
 	page_number, size = _coerce_page(page, page_size)
 
 	where = ""
@@ -493,7 +522,7 @@ def list_vendor_validation_status(
 		}
 		for row in rows
 	]
-	return {
+	return APIResponse.success(data={
 		"vendors": items,
 		"page": page_number,
 		"pageSize": size,
@@ -501,19 +530,12 @@ def list_vendor_validation_status(
 		"totalPages": (total + size - 1) // size if total else 0,
 		"statusCounts": status_counts,
 		"withoutStatus": without_status,
-	}
+	})
 
 
 @frappe.whitelist()
 def set_vendor_validation_status(organization_id: str, status_key: str, comment: str = "") -> dict:
-	"""Move a vendor organization's payer validation status along the workflow.
-
-	The target must be an enabled HISI Checklist Status and must be an
-	allowed *next* status of the organization's current status (or a start
-	status when it has none). Statuses flagged requires_comment reject empty
-	comments. Platform-gated.
-	"""
-	user = _require_platform()
+	user = require_platform()
 	organization_id = (organization_id or "").strip()
 	status_key = (status_key or "").strip()
 	comment = (comment or "").strip()[:MAX_NOTE_LENGTH]
@@ -589,15 +611,6 @@ def _as_int(value, default: int) -> int:
 
 
 def _normalize_status_entries(statuses) -> list[dict]:
-	"""Validate a full save payload for the checklist status workflow.
-
-	The workflow graph is checked against the payload as a whole rather
-	than against the database: every edge target must appear enabled in
-	this same save, so one atomic write can add, rewire and retire
-	statuses without ever violating the HISI Checklist Status invariants.
-	Statuses missing from the payload are left untouched (retire with
-	``enabled = 0`` instead of deleting).
-	"""
 	raw_entries = _as_list(statuses)
 	if not raw_entries:
 		frappe.throw("statuses must be a non-empty list", frappe.ValidationError)
@@ -701,13 +714,6 @@ def _normalize_status_entries(statuses) -> list[dict]:
 
 
 def _status_write_order(entries: list[dict]) -> list[dict]:
-	"""Save order that keeps every individual document save valid.
-
-	Start+enabled statuses first (they satisfy the start invariant on
-	their own), then other enabled statuses, then disabled ones — by the
-	time a disabled status is saved, the payload's enabled start status
-	already exists in the database.
-	"""
 	return sorted(
 		entries,
 		key=lambda item: (
@@ -733,7 +739,7 @@ def save_checklist_statuses(statuses) -> dict:
 	retire with ``enabled = 0`` rather than deleting. Platform-gated.
 	Returns the fresh list_checklist_statuses payload.
 	"""
-	_require_platform()
+	require_platform()
 	entries = _normalize_status_entries(statuses)
 
 	frappe.db.savepoint("save_checklist_statuses")
@@ -777,4 +783,130 @@ def save_checklist_statuses(statuses) -> dict:
 
 	frappe.db.commit()
 	return list_checklist_statuses()
+@frappe.whitelist()
+def get_vendor_validation_status(organization_id: str) -> dict:
+	require_platform()
+	organization_id = (organization_id or "").strip()
+	if not organization_id:
+		frappe.throw("organization_id is required", frappe.ValidationError)
+	if not frappe.db.exists("HISI Vendor Organization", organization_id):
+		frappe.throw("Vendor organization not found", frappe.DoesNotExistError)
+
+	doc = frappe.db.get_value(
+		"HISI Vendor Organization",
+		organization_id,
+		[
+			"organization_name",
+			"website",
+			"dha_certificate_id",
+			"payer_validation_status",
+			"payer_validation_note",
+			"modified",
+		],
+		as_dict=True,
+	)
+	statuses = _status_map()
+	current = (doc.payer_validation_status or "").strip()
+	current_row = statuses.get(current)
+
+	allowed = []
+	if current:
+		for row in frappe.get_all(
+			"HISI Checklist Status Transition",
+			filters={"parenttype": "HISI Checklist Status", "parent": current},
+			fields=["to_status", "action_label"],
+			order_by="idx asc",
+		):
+			target = statuses.get(row.to_status)
+			allowed.append(
+				{
+					"statusKey": row.to_status,
+					"label": target.label if target else row.to_status,
+					"actionLabel": row.action_label or "",
+					"requiresComment": bool(target.requires_comment) if target else False,
+				}
+			)
+	else:
+		# Not judged yet: any enabled start status may begin the workflow.
+		for row in sorted(
+			(statuses[k] for k in statuses if statuses[k].is_start and statuses[k].enabled),
+			key=lambda r: (int(r.sort_order or 0), r.status_key),
+		):
+			allowed.append(
+				{
+					"statusKey": row.status_key,
+					"label": row.label,
+					"actionLabel": "",
+					"requiresComment": bool(row.requires_comment),
+				}
+			)
+
+	return {
+		"organization": {
+			"organizationId": organization_id,
+			"organizationName": doc.organization_name,
+			"website": doc.website or "",
+			"dhaCertificateId": doc.dha_certificate_id or "",
+			"modified": str(doc.modified)[:16] if doc.modified else "",
+		},
+		"status": {
+			"statusKey": current,
+			"label": current_row.label if current_row else "",
+			"judgementType": current_row.judgement_type if current_row else "",
+			"requiresComment": bool(current_row.requires_comment) if current_row else False,
+			"isStart": bool(current_row.is_start) if current_row else False,
+			"description": (current_row.description or "") if current_row else "",
+			"note": doc.payer_validation_note or "",
+		},
+		"allowedNext": allowed,
+	}
+
+
+@frappe.whitelist()
+@api_endpoint
+def update_admin_profile(full_name: str = "", phone_number: str = "", gender: str = "") -> dict:
+	user = require_platform()
+	name = (full_name or "").strip()
+	phone = (phone_number or "").strip()
+	selected_gender = (gender or "").strip()
+
+	if not name and not phone and not selected_gender:
+		raise BadRequest("Provide at least one of full_name, phone_number or gender.")
+	if name and len(name) > MAX_DISPLAY_NAME_LENGTH:
+		raise BadRequest("Display name is too long.")
+	if phone and not PHONE_PATTERN.match(phone):
+		raise BadRequest(
+			"Phone number must be 5-20 characters: digits, spaces, dashes, "
+			"parentheses, optionally with a leading +."
+		)
+	if selected_gender and selected_gender not in GENDER_OPTIONS:
+		raise BadRequest("Gender must be either 'Male' or 'Female'.")
+
+	doc = frappe.get_doc("User", user)
+	changed = False
+	if name and doc.full_name != name:
+		# User.full_name is read-only: Frappe recomputes it on save from the
+		# first/middle/last parts, so write those instead of full_name.
+		parts = name.split()
+		doc.first_name = parts[0]
+		doc.middle_name = " ".join(parts[1:-1]) if len(parts) > 2 else ""
+		doc.last_name = parts[-1] if len(parts) > 1 else ""
+		changed = True
+	if phone and doc.phone != phone:
+		doc.phone = phone
+		changed = True
+	if selected_gender and doc.gender != selected_gender:
+		doc.gender = selected_gender
+		changed = True
+	if changed:
+		doc.save(ignore_permissions=True)
+		frappe.db.commit()
+	return APIResponse.success(data={
+		"email": user,
+		"fullName": doc.full_name or "",
+		"phoneNumber": doc.phone or "",
+		"gender": doc.gender or "",
+		"updated": changed,
+	})
+
 
