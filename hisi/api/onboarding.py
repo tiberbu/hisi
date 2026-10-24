@@ -64,6 +64,20 @@ def _date_or_none(value) -> str | None:
 	return None
 
 
+def _start_status_key() -> str:
+	"""The enabled workflow start status for new organizations, or ``""``
+	when none is configured. ``in_review`` by default — sign-up must not
+	hard-code a key the site may have renamed or disabled."""
+	rows = frappe.get_all(
+		"HISI Checklist Status",
+		filters={"enabled": 1, "is_start": 1},
+		fields=["status_key"],
+		order_by="sort_order asc",
+		limit_page_length=1,
+	)
+	return rows[0].status_key if rows else ""
+
+
 def _verify_certificate(certificate_id: str) -> dict:
 	"""Verify one certificate against the DHA register; raises on any failure."""
 	cert = (certificate_id or "").strip()
@@ -209,10 +223,15 @@ def register_vendor_account(
 		).insert(ignore_permissions=True)
 		update_password(email, password)
 
+		# New organizations enter the payer workflow at its start status
+		# (``in_review`` by default) and carry the certificate ID, so the
+		# admin console shows them as pending from the moment of sign-up.
 		org = frappe.get_doc(
 			{
 				"doctype": "HISI Vendor Organization",
 				"organization_name": org_name,
+				"dha_certificate_id": record["certificate_number"],
+				"payer_validation_status": _start_status_key(),
 				"members": [{"user": email, "member_role": member_role}],
 			}
 		).insert(ignore_permissions=True)

@@ -1,8 +1,7 @@
 {
  "actions": [],
- "allow_rename": 0,
  "autoname": "field:organization_name",
- "creation": "2026-10-17 00:00:00.000000",
+ "creation": "2026-10-17 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -23,12 +22,13 @@
    "reqd": 1,
    "unique": 1
   },
-   {
-    "fieldname": "website",
-    "fieldtype": "Data",
-    "label": "Website",
-    "length": 512
-   },
+  {
+   "fieldname": "website",
+   "fieldtype": "Data",
+   "label": "Website",
+   "length": 512,
+   "search_index": 1
+  },
   {
    "fieldname": "validation_section",
    "fieldtype": "Section Break",
@@ -37,10 +37,12 @@
   {
    "description": "DHA-issued certificate ID currently tied to this organization's payer validation.",
    "fieldname": "dha_certificate_id",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
    "label": "DHA Certificate ID",
-   "length": 64
+   "length": 64,
+   "options": "HISI DHA Certification Reference",
+   "search_index": 1
   },
   {
    "description": "Current payer validation status. Moves are constrained to the status's configured allowed next statuses (HISI Checklist Status workflow).",
@@ -48,7 +50,8 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Payer Validation Status",
-   "options": "HISI Checklist Status"
+   "options": "HISI Checklist Status",
+   "search_index": 1
   },
   {
    "description": "Most recent reviewer comment recorded with the payer validation status change.",
@@ -66,10 +69,11 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-23 11:30:00.000000",
+ "modified": "2026-10-24 19:20:00.776130",
  "modified_by": "Administrator",
- "module": "hisi",
+ "module": "Hisi",
  "name": "HISI Vendor Organization",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {
