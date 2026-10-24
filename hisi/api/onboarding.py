@@ -22,7 +22,6 @@ import re
 import frappe
 import requests
 from frappe.utils.password import update_password
-
 from hisi.utils import get_dha_verify_url
 
 CERTIFICATE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{3,63}$")

@@ -137,8 +137,6 @@ def get_my_profile() -> dict:
 		"organizationName": "",
 	}
 
-	# Administrator first: a user who also holds HISI Vendor (e.g. seeded
-	# demo data) must never be demoted to vendor.
 	if ADMIN_ROLE in roles:
 		return {
 			**profile,

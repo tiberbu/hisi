@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 hisi.patches.settings_defaults
 hisi.patches.workflow_case
+hisi.patches.checklist_statuses

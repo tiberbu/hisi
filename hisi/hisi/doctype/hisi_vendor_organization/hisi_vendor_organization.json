@@ -8,6 +8,10 @@
  "field_order": [
   "organization_name",
   "website",
+  "validation_section",
+  "dha_certificate_id",
+  "payer_validation_status",
+  "payer_validation_note",
   "members"
  ],
  "fields": [
@@ -25,6 +29,33 @@
     "label": "Website",
     "length": 512
    },
+  {
+   "fieldname": "validation_section",
+   "fieldtype": "Section Break",
+   "label": "Payer Validation"
+  },
+  {
+   "description": "DHA-issued certificate ID currently tied to this organization's payer validation.",
+   "fieldname": "dha_certificate_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "DHA Certificate ID",
+   "length": 64
+  },
+  {
+   "description": "Current payer validation status. Moves are constrained to the status's configured allowed next statuses (HISI Checklist Status workflow).",
+   "fieldname": "payer_validation_status",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Payer Validation Status",
+   "options": "HISI Checklist Status"
+  },
+  {
+   "description": "Most recent reviewer comment recorded with the payer validation status change.",
+   "fieldname": "payer_validation_note",
+   "fieldtype": "Small Text",
+   "label": "Payer Validation Note"
+  },
   {
    "description": "Users who may access this organization's HISI workspace.",
    "fieldname": "members",
