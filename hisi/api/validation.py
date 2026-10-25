@@ -37,6 +37,10 @@ from hisi.checklist import (
 )
 from hisi.utils import get_dha_verify_url
 
+# Checklist-definition readers shared with the administrator console: the
+# same published version and payload shapes the vendor pipeline displays.
+from hisi.api.admin import _criterion_payload, current_checklist
+
 # The only role that defines the platform separation (kept local so this
 # module has no import cycle with hisi.api.account).
 ADMIN_ROLE = "System Manager"
@@ -580,6 +584,63 @@ def start_test_run(case_id: str, environment_url: str, synthetic_pack: str | Non
 
 	frappe.db.commit()
 	return {"runId": run.name, "status": "queued"}
+
+
+def _status_pipeline_payload() -> list[dict]:
+	"""Enabled statuses in pipeline order: the phases steps are grouped under."""
+	return [
+		{
+			"statusKey": status.status_key,
+			"label": status.label or "",
+			"sortOrder": int(status.sort_order or 0),
+			"isStart": bool(status.is_start),
+			"description": status.description or "",
+		}
+		for status in frappe.get_all(
+			"HISI Checklist Status",
+			filters={"enabled": 1},
+			fields=["name", "status_key", "label", "sort_order", "is_start", "description"],
+			order_by="sort_order asc, status_key asc",
+		)
+	]
+
+
+@frappe.whitelist()
+def get_checklist_pipeline() -> dict:
+	"""The payer validation pipeline in force, read-only.
+
+	The currently approved checklist (the newest published version, preferring
+	the enabled one, exactly as the administrator console's ``checklist``
+	serves it) with its ordered status phases and every criterion, step and
+	sub step the administrator has defined. Platform definition data only:
+	no organization row is read or written, and the answer is identical for
+	every vendor session.
+	"""
+	_session_user()
+	row = current_checklist()
+	if not row:
+		return {
+			"version": "",
+			"effectiveOn": "",
+			"published": 0,
+			"enabled": 0,
+			"releaseNotes": "",
+			"statuses": [],
+			"criteria": [],
+		}
+	graph = step_graph(row.name)
+	criteria = [
+		_criterion_payload(criterion, graph) for criterion in criteria_of(row.name)
+	]
+	return {
+		"version": row.version or "",
+		"effectiveOn": row.effective_on or "",
+		"published": int(row.published or 0),
+		"enabled": int(getattr(row, "enabled", 1) or 0),
+		"releaseNotes": row.release_notes or "",
+		"statuses": _status_pipeline_payload(),
+		"criteria": criteria,
+	}
 
 
 @frappe.whitelist()

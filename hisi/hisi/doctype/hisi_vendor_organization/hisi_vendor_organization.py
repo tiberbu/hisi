@@ -47,7 +47,7 @@ class HISIVendorOrganization(Document):
 		if self.is_new() or not new_status:
 			return
 		previous = frappe.db.get_value(
-			self.doctype, self.name, "payer_validation_status", ignore_missing=True
+			self.doctype, self.name, "payer_validation_status"
 		)
 		previous = (previous or "").strip()
 		if previous == new_status:
