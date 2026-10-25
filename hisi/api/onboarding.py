@@ -222,15 +222,10 @@ def register_vendor_account(
 			}
 		).insert(ignore_permissions=True)
 		update_password(email, password)
-
-		# New organizations enter the payer workflow at its start status
-		# (``in_review`` by default) and carry the certificate ID, so the
-		# admin console shows them as pending from the moment of sign-up.
 		org = frappe.get_doc(
 			{
 				"doctype": "HISI Vendor Organization",
 				"organization_name": org_name,
-				"dha_certificate_id": record["certificate_number"],
 				"payer_validation_status": _start_status_key(),
 				"members": [{"user": email, "member_role": member_role}],
 			}
@@ -273,6 +268,9 @@ def register_vendor_account(
 					"verification_note": record["message"],
 				}
 			).insert(ignore_permissions=True)
+		org.dha_certificate_id = record["certificate_number"]
+		org.save(ignore_permissions=True)
+		frappe.db.commit()
 	except frappe.DuplicateEntryError:
 		frappe.db.rollback(save_point="onboarding_register")
 		raise
