@@ -9,8 +9,11 @@
   "version",
   "effective_on",
   "published",
+  "enabled",
   "criteria",
-  "release_notes"
+  "release_notes",
+  "changes_section",
+  "changes"
  ],
  "fields": [
   {
@@ -30,7 +33,7 @@
   },
   {
    "default": "0",
-   "description": "A published release is immutable; criteria must not be edited afterwards.",
+   "description": "Published checklists can be edited in place; edits are tracked in the change log.",
    "fieldname": "published",
    "fieldtype": "Check",
    "in_list_view": 1,
@@ -47,11 +50,32 @@
    "fieldname": "release_notes",
    "fieldtype": "Small Text",
    "label": "Release Notes"
+  },
+  {
+   "default": "Change History",
+   "description": "Append-only log of changes made to this checklist: who changed what, when, and a structured diff.",
+   "fieldname": "changes_section",
+   "fieldtype": "Section Break",
+   "label": "Change History"
+  },
+  {
+   "fieldname": "changes",
+   "fieldtype": "Table",
+   "label": "Changes",
+   "options": "HISI Checklist Change Log"
+  },
+  {
+   "default": "1",
+   "description": "Disabled checklist versions are ignored by the current-version lookups; published rows stay for existing cases.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-17 00:00:00.000000",
+ "modified": "2026-10-24 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "hisi",
  "name": "HISI Checklist Version",

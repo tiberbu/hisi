@@ -1,0 +1,156 @@
+{
+ "actions": [],
+ "autoname": "format:{checklist_version}-{criterion_id}-{step_key}",
+ "creation": "2026-10-24 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "checklist_version",
+  "criterion_id",
+  "step_key",
+  "label",
+  "sort_order",
+  "checklist_status",
+  "requires_note",
+  "column_break_1",
+  "description",
+  "evidence_section",
+  "evidence_required",
+  "evidence_type",
+  "evidence_hint"
+ ],
+ "fields": [
+  {
+   "description": "Checklist version this step belongs to, e.g. 1.7. Written from the parent criterion on save; never edited on its own.",
+   "fieldname": "checklist_version",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Checklist Version",
+   "options": "HISI Checklist Version",
+   "reqd": 1,
+   "search_index": 1
+  },
+   {
+    "description": "Criterion this step belongs to within the checklist version, e.g. CC-01.",
+    "fieldname": "criterion_id",
+    "fieldtype": "Link",
+    "in_list_view": 1,
+    "label": "Criterion ID",
+    "options": "HISI Criterion",
+    "reqd": 1,
+    "search_index": 1
+   },
+  {
+   "description": "Stable machine key for this step within the criterion, e.g. intake, test_plan, gaps_closed.",
+   "fieldname": "step_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Step Key",
+   "reqd": 1
+  },
+  {
+   "description": "Vendor-facing label for this validation step, e.g. Gap register reviewed.",
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Display order for this step; lower numbers appear first.",
+   "fieldname": "sort_order",
+   "fieldtype": "Int",
+   "label": "Sort Order"
+  },
+  {
+   "description": "The checklist status this step belongs to. A status can only be marked complete once every step of that status is complete.",
+   "fieldname": "checklist_status",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Checklist Status",
+   "options": "HISI Checklist Status",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "0",
+   "description": "A note/evidence citation is mandatory when this step is completed directly (no sub steps).",
+   "fieldname": "requires_note",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Requires Note"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Guidance shown to the vendor while they work this step.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "default": "Evidence",
+   "description": "Evidence required when the step is completed directly. Once the step has sub steps, each sub step carries its own evidence rule.",
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Evidence"
+  },
+  {
+   "default": "0",
+   "description": "The step cannot be completed without the configured evidence.",
+   "fieldname": "evidence_required",
+   "fieldtype": "Check",
+   "label": "Evidence Required"
+  },
+  {
+   "default": "Note",
+   "description": "Note = text citation, File = uploaded file, Note or file = either one.",
+   "fieldname": "evidence_type",
+   "fieldtype": "Select",
+   "label": "Evidence Type",
+   "options": "Note\nFile\nNote or file"
+  },
+  {
+   "description": "Hint shown to the vendor, e.g. Link to the gap register export.",
+   "fieldname": "evidence_hint",
+   "fieldtype": "Small Text",
+   "label": "Evidence Hint"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-25 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Checklist Criterion Step",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "sort_order",
+ "sort_order": "ASC",
+ "states": []
+}

@@ -122,7 +122,9 @@ def get_my_profile() -> dict:
 
 	roles = list(frappe.get_roles(user))
 	user_row = (
-		frappe.db.get_value("User", user, ["full_name", "email", "last_login"], as_dict=True)
+		frappe.db.get_value(
+			"User", user, ["full_name", "email", "mobile_no", "gender", "last_login"], as_dict=True
+		)
 		or frappe._dict()
 	)
 	last_login = user_row.get("last_login")
@@ -130,6 +132,8 @@ def get_my_profile() -> dict:
 	profile = {
 		"email": user_row.get("email") or user,
 		"fullName": user_row.get("full_name") or user,
+		"phoneNumber": user_row.get("mobile_no") or "",
+		"gender": user_row.get("gender") or "",
 		"signInMethod": "Organization sign-in",
 		# User.last_login is a Read Only string ("YYYY-MM-DD HH:MM:SS").
 		"lastSignIn": str(last_login)[:16] if last_login else "",
@@ -137,8 +141,6 @@ def get_my_profile() -> dict:
 		"organizationName": "",
 	}
 
-	# Administrator first: a user who also holds HISI Vendor (e.g. seeded
-	# demo data) must never be demoted to vendor.
 	if ADMIN_ROLE in roles:
 		return {
 			**profile,

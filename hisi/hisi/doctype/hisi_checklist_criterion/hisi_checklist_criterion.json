@@ -4,50 +4,23 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "criterion_id",
-  "title",
-  "is_critical",
-  "statement",
-  "evidence_options"
+  "criterion_id"
  ],
  "fields": [
   {
-   "description": "Source criterion identifier, e.g. CC-01.",
+   "description": "Predefined criterion this row links to, e.g. CC-01. The row itself only carries the link and the order; title, statement, criticality and evidence options live on the criterion.",
    "fieldname": "criterion_id",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Criterion ID",
+   "options": "HISI Criterion",
    "reqd": 1
-  },
-  {
-   "fieldname": "title",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Title",
-   "reqd": 1
-  },
-  {
-   "default": "0",
-   "fieldname": "is_critical",
-   "fieldtype": "Check",
-   "in_list_view": 1,
-   "label": "Critical"
-  },
-  {
-   "fieldname": "statement",
-   "fieldtype": "Text",
-   "label": "Statement"
-  },
-  {
-   "fieldname": "evidence_options",
-   "fieldtype": "Small Text",
-   "label": "Evidence Options"
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-10-17 00:00:00.000000",
+ "modified": "2026-10-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "hisi",
  "name": "HISI Checklist Criterion",

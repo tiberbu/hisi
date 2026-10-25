@@ -12,18 +12,16 @@
   "dha_certificate",
   "checklist_version",
   "column_break",
-   "release_version",
-   "scope",
-   "scope_notes",
-   "state",
+  "release_version",
+  "scope",
+  "scope_notes",
+  "state",
   "current_owner",
   "next_action",
   "acknowledgement_section",
   "acknowledged_by",
   "acknowledged_on",
-  "acknowledgement_note",
-  "assessments_section",
-  "criteria_assessments"
+  "acknowledgement_note"
  ],
  "fields": [
   {
@@ -76,22 +74,22 @@
    "in_list_view": 1,
    "label": "Release Under Evaluation"
   },
-   {
-    "default": "SHA Digital Claims workflow",
-    "fieldname": "scope",
-    "fieldtype": "Data",
-    "in_list_view": 1,
-    "label": "SHA Claims Scope"
-   },
-   {
-    "description": "Declared capabilities and facility scope supplied when the certificate was linked.",
-    "fieldname": "scope_notes",
-    "fieldtype": "Small Text",
-    "label": "Scope Notes"
-   },
-   {
-    "default": "Linked to DHA record",
-    "fieldname": "state",
+  {
+   "default": "SHA Digital Claims workflow",
+   "fieldname": "scope",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "SHA Claims Scope"
+  },
+  {
+   "description": "Declared capabilities and facility scope supplied when the certificate was linked.",
+   "fieldname": "scope_notes",
+   "fieldtype": "Small Text",
+   "label": "Scope Notes"
+  },
+  {
+   "default": "Linked to DHA record",
+   "fieldname": "state",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "State",
@@ -131,23 +129,11 @@
    "fieldtype": "Small Text",
    "label": "Acknowledgement Note",
    "read_only": 1
-  },
-  {
-   "fieldname": "assessments_section",
-   "fieldtype": "Section Break",
-   "label": "Criterion Assessments"
-  },
-  {
-   "description": "Per-criterion reviewer assessment for this case. Distinguishes test results from compliance assessment.",
-   "fieldname": "criteria_assessments",
-   "fieldtype": "Table",
-   "label": "Criteria Assessments",
-   "options": "HISI Case Criterion Assessment"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-23 11:30:00.000000",
+ "modified": "2026-10-24 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "hisi",
  "name": "HISI SHA Validation Case",
@@ -165,17 +151,17 @@
    "share": 1,
    "write": 1
   },
-   {
-    "read": 1,
-    "role": "HISI Reviewer"
-   },
-   {
-    "create": 1,
-    "read": 1,
-    "role": "HISI Vendor",
-    "write": 1
-   }
-  ],
+  {
+   "read": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "HISI Vendor",
+   "write": 1
+  }
+ ],
  "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "ASC",

@@ -1,20 +1,13 @@
 import frappe
 
+from hisi.checklist import assessments_of, criteria_of
+
 
 @frappe.whitelist(allow_guest=False)
 def get_validation_case_view(case: str | None = None) -> dict:
-	"""Return a narrow, permission-aware view of one SHA validation case.
-
-	Requires an authenticated Frappe session (sid). All reads go through
-	permission-aware accessors, so a user only ever sees data their roles
-	and organization membership allow. The response is a minimal view model;
-	raw Frappe documents are never returned.
-	"""
 	if frappe.session.user == "Guest":
 		frappe.throw("Not authorized", frappe.PermissionError)
 
-	# frappe.get_doc does not enforce permissions; check explicitly on every
-	# document this method reads (NFR-001).
 	if case:
 		doc = frappe.get_doc("HISI SHA Validation Case", case)
 		doc.check_permission("read")
@@ -39,9 +32,9 @@ def get_validation_case_view(case: str | None = None) -> dict:
 	checklist = frappe.get_doc("HISI Checklist Version", doc.checklist_version)
 	checklist.check_permission("read")
 
-	assessment_by_id = {row.criterion_id: row for row in doc.criteria_assessments}
+	assessment_by_id = assessments_of(doc.name)
 	criteria = []
-	for crit in checklist.criteria:
+	for crit in criteria_of(doc.checklist_version):
 		row = assessment_by_id.get(crit.criterion_id)
 		criteria.append(
 			{
