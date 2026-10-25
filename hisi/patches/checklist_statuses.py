@@ -2,21 +2,45 @@
 
 HISI Checklist Status rows are configuration, not code: the administrator
 Checklist page and the review APIs read them. This patch installs a sensible
-default graph once (idempotent — existing keys are left untouched so site
-edits survive re-migrate):
+default graph once (idempotent — existing keys and edges are left untouched
+so site edits survive re-migrate):
 
-    in_review ──> approved
-              ──> rejected
-              ──> more_info_required ──> in_review
+    pending ──> in_progress ──> in_review ──> approved
+                                         ──> rejected
+                                         ──> more_info_required ──> in_progress
 
-``in_review`` starts the workflow; ``approved``/``rejected`` are terminal.
-``more_info_required`` demands a reviewer comment.
+``pending`` is the default: the state a checklist sits in before the vendor
+starts the verification journey, and the status new steps are tagged with
+unless the payload says otherwise. ``in_progress`` is where the vendor works
+through them; a status can only be entered once every step of that status is
+finished (see ``hisi.checklist.status_completion``). ``approved``/``rejected``
+are terminal and ``more_info_required`` demands a reviewer comment. Edges
+added by earlier releases (``pending ──> in_review``,
+``more_info_required ──> in_review``) are never removed here.
 """
 
 import frappe
 
 # key, label, judgement_type, sort_order, is_start, requires_comment, description
 STATUSES = [
+	(
+		"pending",
+		"Pending",
+		"Other",
+		0,
+		1,
+		0,
+		"Vendor is waiting to start payer validation. Has already onboarded to the process",
+	),
+	(
+		"in_progress",
+		"In progress",
+		"Other",
+		5,
+		0,
+		0,
+		"Vendor is working through the checklist steps for this criterion.",
+	),
 	(
 		"in_review",
 		"In review",
@@ -41,12 +65,17 @@ STATUSES = [
 
 # key -> [(to_status_key, action_label)]
 TRANSITIONS = {
+	"pending": [("in_progress", "Start work")],
+	"in_progress": [("in_review", "Submit for review")],
 	"in_review": [
 		("approved", "Approve"),
 		("rejected", "Reject"),
 		("more_info_required", "Request more info"),
 	],
-	"more_info_required": [("in_review", "Resume review")],
+	"more_info_required": [
+		("in_review", "Resume review"),
+		("in_progress", "Address feedback"),
+	],
 }
 
 

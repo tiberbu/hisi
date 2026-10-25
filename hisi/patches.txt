@@ -7,3 +7,5 @@
 hisi.patches.settings_defaults
 hisi.patches.workflow_case
 hisi.patches.checklist_statuses
+hisi.patches.checklist_flat_steps
+hisi.patches.checklist_criteria_catalog

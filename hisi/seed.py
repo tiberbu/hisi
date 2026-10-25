@@ -9,6 +9,8 @@ yet and never mutates existing ones.
 
 import frappe
 
+from hisi.checklist import criteria_of
+
 CRITERIA = [
 	("CC-01", "Pre-Certification Gap Identification", "Structured intake and SHA validation/testing before sign-off; all critical defects must be resolved before sign-off.", "Intake record, test plan, gap register", 1),
 	("CC-02", "Uniform Benefits Matrix & Access Rules", "HIE/SHA benefit and access-rule fixtures and claim/preauthorization assertions.", "API assertions, benefit-rule response evidence", 1),
@@ -18,6 +20,26 @@ CRITERIA = [
 	("CC-06", "Claims & Patient Journey Visibility", "Claim/notification correlation, status progression and facility/platform-level views.", "Visibility review, API correlation trace", 0),
 	("CC-07", "Authorizations and Claims Tracking", "Authorization and preauthorization lifecycle, claim linkage, submission and response tracking.", "API lifecycle trace", 1),
 ]
+
+
+def _ensure_criteria() -> list[str]:
+	"""Predefined criteria the demo checklist links to (idempotent)."""
+	created = []
+	for criterion_id, title, statement, evidence, critical in CRITERIA:
+		if frappe.db.exists("HISI Criterion", criterion_id):
+			continue
+		frappe.get_doc(
+			{
+				"doctype": "HISI Criterion",
+				"criterion_id": criterion_id,
+				"title": title,
+				"statement": statement,
+				"evidence_options": evidence,
+				"is_critical": critical,
+			}
+		).insert(ignore_if_duplicate=True)
+		created.append(f"criterion {criterion_id!r}")
+	return created
 
 
 def run_demo_seed() -> list[str]:
@@ -65,6 +87,8 @@ def run_demo_seed() -> list[str]:
 		).insert(ignore_if_duplicate=True)
 		created.append(f"dha certification reference {cert.name!r}")
 
+	created.extend(_ensure_criteria())
+
 	CHECKLIST = "1.0"
 	if not frappe.db.exists("HISI Checklist Version", CHECKLIST):
 		checklist = frappe.get_doc(
@@ -74,16 +98,7 @@ def run_demo_seed() -> list[str]:
 				"effective_on": frappe.utils.today(),
 				"published": 1,
 				"release_notes": "First published release of the SHA claims criteria (CC-01 to CC-07).",
-				"criteria": [
-					{
-						"criterion_id": criterion_id,
-						"title": title,
-						"statement": statement,
-						"evidence_options": evidence,
-						"is_critical": critical,
-					}
-					for criterion_id, title, statement, evidence, critical in CRITERIA
-				],
+				"criteria": [{"criterion_id": row[0]} for row in CRITERIA],
 			}
 		).insert(ignore_if_duplicate=True)
 		created.append(f"checklist version {checklist.name!r}")
@@ -145,21 +160,13 @@ def _ensure_assessments(case_name: str, checklist: str, all_pass: bool) -> list[
 	`all_pass=False` leaves one failed and one unassessed criterion so the
 	administrator workspace has a not-ready case to show.
 	"""
-	if frappe.db.exists(
-		"HISI Case Criterion Assessment", {"parenttype": "HISI SHA Validation Case", "parent": case_name}
-	):
+	if frappe.db.exists("HISI Case Criterion Assessment", {"case": case_name}):
 		return []
 
-	criteria = frappe.get_all(
-		"HISI Checklist Criterion",
-		filters={"parenttype": "HISI Checklist Version", "parent": checklist},
-		fields=["criterion_id", "title", "is_critical"],
-		order_by="idx asc",
-	)
+	criteria = criteria_of(checklist)
 	if not criteria:
 		return []
 
-	case = frappe.get_doc("HISI SHA Validation Case", case_name)
 	for index, criterion in enumerate(criteria):
 		if all_pass:
 			assessment = "Pass"
@@ -173,9 +180,10 @@ def _ensure_assessments(case_name: str, checklist: str, all_pass: bool) -> list[
 		else:
 			assessment = "Pass"
 			rationale = "Seeded passing assessment for demonstration."
-		case.append(
-			"criteria_assessments",
+		frappe.get_doc(
 			{
+				"doctype": "HISI Case Criterion Assessment",
+				"case": case_name,
 				"criterion_id": criterion.criterion_id,
 				"criterion_title": criterion.title,
 				"is_critical": criterion.is_critical,
@@ -183,9 +191,8 @@ def _ensure_assessments(case_name: str, checklist: str, all_pass: bool) -> list[
 				"rationale": rationale,
 				"assessed_by": frappe.session.user if assessment != "Not assessed" else None,
 				"assessed_on": frappe.utils.now() if assessment != "Not assessed" else None,
-			},
-		)
-	case.save()
+			}
+		).insert(ignore_if_duplicate=True)
 	return [f"{len(criteria)} criterion assessments on {case_name!r}"]
 
 

@@ -1,5 +1,7 @@
 import frappe
 
+from hisi.checklist import assessments_of, criteria_of
+
 
 @frappe.whitelist(allow_guest=False)
 def get_validation_case_view(case: str | None = None) -> dict:
@@ -30,9 +32,9 @@ def get_validation_case_view(case: str | None = None) -> dict:
 	checklist = frappe.get_doc("HISI Checklist Version", doc.checklist_version)
 	checklist.check_permission("read")
 
-	assessment_by_id = {row.criterion_id: row for row in doc.criteria_assessments}
+	assessment_by_id = assessments_of(doc.name)
 	criteria = []
-	for crit in checklist.criteria:
+	for crit in criteria_of(doc.checklist_version):
 		row = assessment_by_id.get(crit.criterion_id)
 		criteria.append(
 			{

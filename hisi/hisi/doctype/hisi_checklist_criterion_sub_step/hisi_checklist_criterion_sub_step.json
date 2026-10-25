@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "autoname": "format:{step}-{sub_step_key}",
+ "creation": "2026-10-24 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "step",
+  "sub_step_key",
+  "label",
+  "sort_order",
+  "column_break_1",
+  "description",
+  "evidence_section",
+  "evidence_required",
+  "evidence_type",
+  "evidence_hint"
+ ],
+ "fields": [
+  {
+   "description": "Parent step this sub step belongs to.",
+   "fieldname": "step",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Step",
+   "options": "HISI Checklist Criterion Step",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Stable machine key for this sub step within the step, e.g. a1s1.",
+   "fieldname": "sub_step_key",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Sub Step Key",
+   "reqd": 1
+  },
+  {
+   "description": "Vendor-facing label, e.g. Fetch Patient from CR.",
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Display order for this sub step; lower numbers appear first.",
+   "fieldname": "sort_order",
+   "fieldtype": "Int",
+   "label": "Sort Order"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Guidance shown to the vendor while they work this sub step.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "default": "Evidence",
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Evidence"
+  },
+  {
+   "default": "0",
+   "description": "The sub step cannot be completed without the configured evidence.",
+   "fieldname": "evidence_required",
+   "fieldtype": "Check",
+   "label": "Evidence Required"
+  },
+  {
+   "default": "Note",
+   "description": "Note = text citation, File = uploaded file, Note or file = either one.",
+   "fieldname": "evidence_type",
+   "fieldtype": "Select",
+   "label": "Evidence Type",
+   "options": "Note\nFile\nNote or file"
+  },
+  {
+   "description": "Hint shown to the vendor, e.g. Upload the signed training roster.",
+   "fieldname": "evidence_hint",
+   "fieldtype": "Small Text",
+   "label": "Evidence Hint"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-24 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Checklist Criterion Sub Step",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Reviewer"
+  },
+  {
+   "read": 1,
+   "role": "HISI Vendor"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "sort_order",
+ "sort_order": "ASC",
+ "states": []
+}
