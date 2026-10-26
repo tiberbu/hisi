@@ -206,7 +206,7 @@ def run_vendor_user_seed() -> list[str]:
 
 	Creates the vendor user (role `HISI Vendor`, password `root`) and links
 	them to a vendor organization as `Vendor Administrator`, so
-	`hisi.api.account.get_my_profile` can be exercised for the vendor path.
+	`hisi.api.auth.get_my_profile` can be exercised for the vendor path.
 
 	Run with:
 	    bench --site <site> execute hisi.seed.run_vendor_user_seed
