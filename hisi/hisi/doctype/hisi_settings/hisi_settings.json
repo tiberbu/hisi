@@ -4,21 +4,165 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "dha_verify_url"
+  "hie_settings_section",
+  "base_url",
+  "username",
+  "password",
+  "consumer_key",
+  "consumer_secret",
+  "column_break_jotr",
+  "fetch_client",
+  "fetch_practitioner",
+  "fetch_facility",
+  "eligibility_check",
+  "upstream_api_timeout",
+  "jwt_ttl_s",
+  "eligibility_and_coverage_tab",
+  "fs_base_url",
+  "fs_member_contribution",
+  "enable_uat_simulation",
+  "uat_base_url",
+  "fetch_patient_consent",
+  "patient_records_tab",
+  "data_store_id",
+  "aws_access_key",
+  "aws_secret_key",
+  "aws_region",
+  "query_mapper"
  ],
  "fields": [
   {
-   "default": "https://service.dha.go.ke/api/public/verify",
-   "description": "Base URL of the DHA public certificate verification API",
-   "fieldname": "dha_verify_url",
+   "fieldname": "base_url",
    "fieldtype": "Data",
-   "label": "DHA Verify URL",
-   "length": 512
+   "label": "Base URL"
+  },
+  {
+   "fieldname": "username",
+   "fieldtype": "Data",
+   "label": "Username"
+  },
+  {
+   "fieldname": "password",
+   "fieldtype": "Password",
+   "label": "Password"
+  },
+  {
+   "fieldname": "consumer_key",
+   "fieldtype": "Data",
+   "label": "Consumer Key"
+  },
+  {
+   "fieldname": "consumer_secret",
+   "fieldtype": "Password",
+   "label": "Consumer Secret"
+  },
+  {
+   "fieldname": "hie_settings_section",
+   "fieldtype": "Section Break",
+   "label": "HIE Settings"
+  },
+  {
+   "fieldname": "fetch_client",
+   "fieldtype": "Data",
+   "label": "Fetch Client"
+  },
+  {
+   "fieldname": "fetch_practitioner",
+   "fieldtype": "Data",
+   "label": "Fetch Practitioner"
+  },
+  {
+   "fieldname": "fetch_facility",
+   "fieldtype": "Data",
+   "label": "Fetch Facility"
+  },
+  {
+   "fieldname": "column_break_jotr",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "eligibility_and_coverage_tab",
+   "fieldtype": "Tab Break",
+   "label": "Contributions, Visit, Consent"
+  },
+  {
+   "fieldname": "fs_base_url",
+   "fieldtype": "Data",
+   "label": "FS Base URL"
+  },
+  {
+   "fieldname": "fs_member_contribution",
+   "fieldtype": "Data",
+   "label": "FS Member Contribution"
+  },
+  {
+   "fieldname": "eligibility_check",
+   "fieldtype": "Data",
+   "label": "Eligibility Check"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_uat_simulation",
+   "fieldtype": "Check",
+   "label": "Enable UAT Simulation (SHR)"
+  },
+  {
+   "fieldname": "uat_base_url",
+   "fieldtype": "Data",
+   "label": "UAT Base URL"
+  },
+  {
+   "fieldname": "fetch_patient_consent",
+   "fieldtype": "Data",
+   "label": "Fetch Patient Consent"
+  },
+  {
+   "fieldname": "upstream_api_timeout",
+   "fieldtype": "Int",
+   "label": "Upstream API Timeout (s)",
+   "min_value": 60.0
+  },
+  {
+   "fieldname": "jwt_ttl_s",
+   "fieldtype": "Int",
+   "label": "JWT TTL (s)",
+   "min_value": 60.0
+  },
+  {
+   "fieldname": "patient_records_tab",
+   "fieldtype": "Tab Break",
+   "label": "Patient Records"
+  },
+  {
+   "fieldname": "data_store_id",
+   "fieldtype": "Data",
+   "label": "Data Store ID"
+  },
+  {
+   "fieldname": "aws_access_key",
+   "fieldtype": "Data",
+   "label": "AWS Access Key"
+  },
+  {
+   "fieldname": "aws_secret_key",
+   "fieldtype": "Data",
+   "label": "AWS Secret Key"
+  },
+  {
+   "fieldname": "aws_region",
+   "fieldtype": "Data",
+   "label": "AWS Region"
+  },
+  {
+   "fieldname": "query_mapper",
+   "fieldtype": "Table",
+   "label": "Query Mapper",
+   "options": "SHR Query Mapping"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-24 12:49:01.822244",
+ "modified": "2026-10-28 21:29:16.411551",
  "modified_by": "Administrator",
  "module": "Hisi",
  "name": "HISI Settings",
