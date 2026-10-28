@@ -55,17 +55,24 @@ def link_for_app(link: str) -> str:
 
 @frappe.whitelist(allow_guest=True)
 def list_social_logins(redirect_to: str = "") -> dict:
+	"""Enabled social providers with the label and icon configured on each
+	Social Login Key, so the frontend renders them as-is (no hardcoding)."""
 	redirect = validated_redirect(redirect_to or "")
 	providers = []
 	for row in frappe.get_all(
 		"Social Login Key",
 		filters={"enable_social_login": 1},
-		fields=["name"],
+		fields=["name", "social_login_provider", "provider_name", "icon"],
 		order_by="name asc",
 	):
 		try:
 			providers.append(
-				{"name": row.name, "authUrl": get_oauth2_authorize_url(row.name, redirect)}
+				{
+					"name": row.name,
+					"providerName": row.provider_name or row.social_login_provider or row.name,
+					"icon": row.icon or "",
+					"authUrl": get_oauth2_authorize_url(row.name, redirect),
+				}
 			)
 		except Exception:
 			frappe.log_error(
