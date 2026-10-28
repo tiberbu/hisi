@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -295,6 +296,17 @@ class TestPatientFlow(IntegrationTestCase):
         self.assertEqual(mock_get.call_args.args[0], "https://uat.dha.go.ke/v1/cmp/resource/Visit Consent")
         self.assertNotIn("Authorization", mock_get.call_args.kwargs["headers"])
 
+    def test_consent_records_without_visit_id_filtered(self):
+        record_without_visit = dict(consent_payload()["data"][0])
+        record_without_visit["name"] = "VCR-20261028-NOVISIT"
+        record_without_visit["visit_id"] = ""
+        payload = {"data": [consent_payload()["data"][0], record_without_visit]}
+        with patch.object(patient.requests, "get", return_value=http_response(payload)):
+            self.run_flow(["consent"], {"cr_id": "CR1"})
+        records = frappe.local.response.get("data")["results"]["consent"]["records"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["visit_id"], "b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca")
+
     def test_consent_requires_uat_base_url(self):
         self.set_settings(uat_base_url="")
         self.run_flow(["consent"], {"cr_id": "CR1"})
@@ -383,3 +395,178 @@ class TestPatientFlow(IntegrationTestCase):
         self.set_settings(consumer_key="")
         self.run_flow(["patient"], {"identification_type": "CR ID", "identification_number": "CR1"})
         self.assertEqual(frappe.local.response.get("code"), "BAD_REQUEST")
+
+    def fhir_records_bundle(self):
+        return {
+            "resourceType": "Bundle",
+            "type": "searchset",
+            "total": 2,
+            "entry": [
+                {"resource": {"resourceType": "Encounter", "id": "enc-1", "status": "finished"}},
+                {"resource": {"resourceType": "Condition", "id": "cond-1"}},
+            ],
+        }
+
+    def set_aws_settings(self):
+        self.set_settings(
+            data_store_id="0123456789abcdef0123456789abcdef01",
+            aws_access_key="AKIAEXAMPLEKEY00000001",
+            aws_secret_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_region="eu-west-2",
+            query_mapper=[{"param_key": "_include", "param_value": "Encounter:service-provider"}],
+        )
+
+    def test_full_sequence_flow_with_records_step(self):
+        self.set_aws_settings()
+        elig = http_response({"message": {"status": "Active", "scheme": "SHIF"}})
+        consent = http_response(consent_payload())
+        with patch.object(patient.requests, "get", side_effect=[http_response(patient_payload()), consent, http_response(self.fhir_records_bundle())]) as mock_get, patch.object(
+            patient.requests, "post", return_value=elig
+        ):
+            self.run_flow(["patient", "eligibility", "consent", "records"], {"cr_id": "CR2473157541615-8"})
+        records_call = mock_get.call_args_list[2]
+        self.assertIn("episode-of-care=b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca", records_call.args[0])
+        self.assertIn("_include=Encounter%3Aservice-provider", records_call.args[0])
+        data = frappe.local.response.get("data")
+        self.assertEqual(data["results"]["records"]["visit_id"], "b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca")
+        self.assertEqual([r.get("resourceType") for r in data["results"]["records"]["records"]], ["Encounter", "Condition"])
+
+    def test_records_step_with_visit_id_filter(self):
+        self.set_aws_settings()
+        with patch.object(patient.requests, "get", return_value=http_response(self.fhir_records_bundle())) as mock_get:
+            self.run_flow(["records"], {"visit_id": "d7fd81f8-bb9f-4f5d-8a8e-fc12014aa0d6"})
+        self.assertIn("episode-of-care=d7fd81f8-bb9f-4f5d-8a8e-fc12014aa0d6", mock_get.call_args.args[0])
+        data = frappe.local.response.get("data")
+        self.assertEqual(data["results"]["records"]["visit_id"], "d7fd81f8-bb9f-4f5d-8a8e-fc12014aa0d6")
+        self.assertNotIn("consent", data["results"])
+
+    def test_records_step_uses_consent_visit_id(self):
+        self.set_aws_settings()
+        consent = http_response(consent_payload())
+        with patch.object(patient.requests, "get", side_effect=[consent, http_response(self.fhir_records_bundle())]) as mock_get:
+            self.run_flow(["consent", "records"], {"cr_id": "CR1"})
+        self.assertIn("episode-of-care=b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca", mock_get.call_args_list[1].args[0])
+        self.assertEqual(frappe.local.response.get("data")["results"]["records"]["visit_id"], "b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca")
+
+    def test_records_step_requires_visit_id(self):
+        self.run_flow(["records"], {})
+        response = frappe.local.response
+        self.assertEqual(response.get("code"), "BAD_REQUEST")
+        self.assertIn("visit_id", response.get("message"))
+
+
+class TestFetchPatientRecords(IntegrationTestCase):
+    VISIT_ID = "d7fd81f8-bb9f-4f5d-8a8e-fc12014aa0d6"
+    ACCESS_KEY = "AKIAEXAMPLEKEY00000001"
+    SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    REGION = "eu-west-2"
+    DATA_STORE_ID = "0123456789abcdef0123456789abcdef01"
+
+    def bundle_payload(self):
+        return {
+            "resourceType": "Bundle",
+            "type": "searchset",
+            "total": 3,
+            "entry": [
+                {"resource": {"resourceType": "Encounter", "id": "enc-1", "status": "finished"}},
+                {"resource": {"resourceType": "Practitioner", "id": "pract-1"}},
+                {"resource": {"resourceType": "Observation", "id": "obs-1", "status": "final"}},
+            ],
+        }
+
+    def expected_params(self):
+        return [
+            ("episode-of-care", self.VISIT_ID),
+            ("_include", "Encounter:service-provider"),
+            ("_revinclude", "Observation:encounter"),
+            ("_revinclude", "Condition:encounter"),
+        ]
+
+    def expected_query(self):
+        from urllib.parse import quote
+
+        encoded = sorted((quote(str(key), safe="-_.~"), quote(str(value), safe="-_.~")) for key, value in self.expected_params())
+        return "&".join(key + "=" + value for key, value in encoded)
+
+    def expected_signature(self, amz_date, host, path, canonical_query):
+        date = amz_date[:8]
+        canonical_request = "\n".join(
+            [
+                "GET",
+                path,
+                canonical_query,
+                "host:{}\nx-amz-date:{}\n".format(host, amz_date),
+                "host;x-amz-date",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ]
+        )
+        scope = "{}/{}/{}/aws4_request".format(date, self.REGION, "healthlake")
+        string_to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()])
+        key = ("AWS4" + self.SECRET_KEY).encode("utf-8")
+        for part in (date, self.REGION, "healthlake", "aws4_request"):
+            key = hmac.new(key, part.encode("utf-8"), hashlib.sha256).digest()
+        return hmac.new(key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def setUp(self):
+        doc = frappe.get_doc("HISI Settings")
+        for key, value in {
+            "data_store_id": self.DATA_STORE_ID,
+            "aws_access_key": self.ACCESS_KEY,
+            "aws_secret_key": self.SECRET_KEY,
+            "aws_region": self.REGION,
+        }.items():
+            doc.set(key, value)
+        doc.set(
+            "query_mapper",
+            [
+                {"param_key": "_include", "param_value": "Encounter:service-provider"},
+                {"param_key": "_revinclude", "param_value": "Observation:encounter"},
+                {"param_key": "_revinclude", "param_value": "Condition:encounter"},
+            ],
+        )
+        doc.save(ignore_permissions=True)
+
+    def test_fetch_builds_signed_request_from_settings(self):
+        class fixed_clock:
+            @staticmethod
+            def now(tz=None):
+                return datetime(2026, 10, 28, 18, 35, 37, tzinfo=timezone.utc)
+
+        host = "healthlake.{}.amazonaws.com".format(self.REGION)
+        path = "/datastore/{}/r4/Encounter".format(self.DATA_STORE_ID)
+        query = self.expected_query()
+        with patch.object(patient.requests, "get", return_value=http_response(self.bundle_payload())) as mock_get, patch.object(
+            patient, "datetime", fixed_clock
+        ):
+            records = patient.fetch_patient_records(self.VISIT_ID)
+        self.assertEqual(mock_get.call_count, 1)
+        self.assertEqual(mock_get.call_args.args[0], "https://{}{}?{}".format(host, path, query))
+        headers = mock_get.call_args.kwargs["headers"]
+        self.assertEqual(headers["X-Amz-Date"], "20261028T183537Z")
+        scope = "20261028/{}/healthlake/aws4_request".format(self.REGION)
+        self.assertTrue(headers["Authorization"].startswith("AWS4-HMAC-SHA256 Credential={}/{}".format(self.ACCESS_KEY, scope)))
+        self.assertIn("SignedHeaders=host;x-amz-date", headers["Authorization"])
+        self.assertEqual(headers["Authorization"].rsplit("Signature=", 1)[1], self.expected_signature("20261028T183537Z", host, path, query))
+        self.assertEqual([r.get("resourceType") for r in records], ["Encounter", "Practitioner", "Observation"])
+
+    def test_fetch_requires_visit_id(self):
+        with self.assertRaises(patient.BadRequest):
+            patient.fetch_patient_records("")
+
+    def test_fetch_requires_aws_settings(self):
+        doc = frappe.get_doc("HISI Settings")
+        doc.set("data_store_id", "")
+        doc.save(ignore_permissions=True)
+        with self.assertRaises(patient.BadRequest) as ctx:
+            patient.fetch_patient_records(self.VISIT_ID)
+        self.assertIn("data_store_id", str(ctx.exception))
+
+    def test_fetch_parses_single_resource(self):
+        with patch.object(patient.requests, "get", return_value=http_response({"resource": {"resourceType": "Encounter", "id": "enc-9"}})):
+            records = patient.fetch_patient_records(self.VISIT_ID)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["resourceType"], "Encounter")
+
+    def test_fetch_empty_bundle(self):
+        with patch.object(patient.requests, "get", return_value=http_response({"resourceType": "Bundle", "entry": []})):
+            self.assertEqual(patient.fetch_patient_records(self.VISIT_ID), [])
