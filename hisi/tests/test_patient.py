@@ -32,7 +32,7 @@ def patient_payload():
             {
                 "id": 2413479,
                 "first_name": "Jane",
-                "middle_name": None,
+                "middle_name": "Aoko",
                 "last_name": "Doe",
                 "gender": "FEMALE",
                 "msisdn": "0724512355",

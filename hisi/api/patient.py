@@ -227,7 +227,7 @@ def parse_records(payload) -> list:
     return []
 
 def patient_name(record: dict) -> str:
-    parts = [record.get("first_name"), record.get("middle_name"), record.get("last_name")]
+    parts = [record.get("first_name"), record.get("last_name")]
     name = " ".join(str(part).strip() for part in parts if part)
     return name or str(record.get("full_name") or record.get("name") or "")
 

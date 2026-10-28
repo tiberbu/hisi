@@ -147,7 +147,7 @@ Rules:
 
 - `results` contains **only** the requested steps, in request order (a step that is not requested is absent, not null).
 - Empty data in any section → empty `records` / empty strings — still 200 (an empty result is a valid success).
-- `patient.name` = `first_name middle_name last_name` (fallback `full_name`/`name`); `cr_id` = the fetched client's `id` (key order `CR_ID_KEYS` starts with `id`; same value at top level and in `results.patient.cr_id`).
+- `patient.name` = `first_name last_name` (middle name excluded from the displayed name, 2026-10-28; fallback `full_name`/`name`); `cr_id` = the fetched client's `id` (key order `CR_ID_KEYS` starts with `id`; same value at top level and in `results.patient.cr_id`).
 - `eligibility` parses DHA's `statusCode`/`statusDesc` + `schemes[]`: `eligible` = at least one scheme with `coverage.status` `"1"` (or a "covered" message); `scheme` = first covered scheme name; `schemes[]` carries the per-scheme coverage detail.
 - `consent.base_url` = the UAT origin actually used; `simulation` = value of `enable_uat_simulation`.
 - An upstream failure on **any** requested step aborts the flow with the error envelope (no partial results in v1).
