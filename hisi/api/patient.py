@@ -375,7 +375,7 @@ def parse_request(data) -> tuple:
     if not isinstance(filters, dict):
         raise BadRequest("filters must be an object.")
     if not isinstance(steps, list) or not steps:
-        raise BadRequest("steps must be a non-empty list of: patient, eligibility, consent.")
+        raise BadRequest("steps must be a non-empty list of: patient, eligibility, consent, records.")
     cleaned = []
     for step in steps:
         step = str(step).strip().lower()
