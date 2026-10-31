@@ -1,0 +1,119 @@
+{
+ "actions": [],
+ "creation": "2026-10-30 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "session",
+  "company",
+  "user",
+  "event_type",
+  "target_type",
+  "target_ref_masked",
+  "outcome",
+  "details",
+  "ip",
+  "location",
+  "duration_ms"
+ ],
+ "fields": [
+  {
+   "description": "The session this event belongs to — null for mandate-level events and pre-gate failures that cannot resolve a session.",
+   "fieldname": "session",
+   "fieldtype": "Link",
+   "label": "Session",
+   "options": "HISI Surveillance Session",
+   "search_index": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "search_index": 1,
+   "description": "ERPNext company that owns this record. Frappe's native Company user permissions scope row-level access per company."
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User"
+  },
+  {
+   "fieldname": "event_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Event Type",
+   "options": "mandate_issued\nmandate_verified\nmandate_verify_failed\nmandate_verify_locked\nmandate_revoked\ncheckin_verified\ncheckin_failed\nsession_started\nsession_expired\nsession_ended\nsession_recheck\npatient_viewed\neligibility_viewed\nconsent_viewed\nrecords_viewed\nfacility_viewed\npractitioner_viewed\nscope_denied\nauth_denied\nerror\nmandate_listed\nsessions_listed\naudit_viewed\nsession_revoked\nofficer_onboarded\nofficer_removed\nmembers_listed\ninvite_confirmed\nofficer_invite_resent\nofficer_updated\nfacilities_searched\npractitioner_registered",
+   "reqd": 1
+  },
+  {
+   "fieldname": "target_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Target Type",
+   "options": "patient\nclaim\nvisit\nfacility\npractitioner\nrecord\nmandate\nsession\nuser"
+  },
+  {
+   "description": "Masked identifier for list views (e.g. CR247…58) — full identifiers never stored here.",
+   "fieldname": "target_ref_masked",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Target Ref (masked)"
+  },
+  {
+   "fieldname": "outcome",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Outcome",
+   "options": "ok\ndenied\nerror\nflagged",
+   "reqd": 1
+  },
+  {
+   "description": "Full context (step names, counts, error codes).",
+   "fieldname": "details",
+   "fieldtype": "JSON",
+   "label": "Details"
+  },
+  {
+   "fieldname": "ip",
+   "fieldtype": "Data",
+   "label": "IP"
+  },
+  {
+   "description": "Check-in events only — the client-reported location.",
+   "fieldname": "location",
+   "fieldtype": "JSON",
+   "label": "Location"
+  },
+  {
+   "fieldname": "duration_ms",
+   "fieldtype": "Int",
+   "label": "Duration (ms)"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Event",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

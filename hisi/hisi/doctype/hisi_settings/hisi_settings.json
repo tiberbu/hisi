@@ -28,7 +28,16 @@
   "aws_access_key",
   "aws_secret_key",
   "aws_region",
-  "query_mapper"
+  "query_mapper",
+  "surveillance_tab",
+  "surveillance_session_ttl_minutes",
+  "surveillance_idle_timeout_minutes",
+  "surveillance_default_radius_km",
+  "surveillance_max_accuracy_m",
+  "surveillance_strict_location",
+  "surveillance_recheck_enabled",
+  "surveillance_verify_lockout_attempts",
+  "surveillance_retention_days"
  ],
  "fields": [
   {
@@ -158,6 +167,59 @@
    "fieldtype": "Table",
    "label": "Query Mapper",
    "options": "SHR Query Mapping"
+  },
+  {
+   "fieldname": "surveillance_tab",
+   "fieldtype": "Tab Break",
+   "label": "Surveillance"
+  },
+  {
+   "default": "240",
+   "fieldname": "surveillance_session_ttl_minutes",
+   "fieldtype": "Int",
+   "label": "Session TTL (minutes)"
+  },
+  {
+   "default": "30",
+   "fieldname": "surveillance_idle_timeout_minutes",
+   "fieldtype": "Int",
+   "label": "Idle timeout (minutes)"
+  },
+  {
+   "default": "1.0",
+   "fieldname": "surveillance_default_radius_km",
+   "fieldtype": "Float",
+   "label": "Default geofence radius (km)"
+  },
+  {
+   "default": "200",
+   "fieldname": "surveillance_max_accuracy_m",
+   "fieldtype": "Int",
+   "label": "Max GPS accuracy (metres)"
+  },
+  {
+   "default": "1",
+   "fieldname": "surveillance_strict_location",
+   "fieldtype": "Check",
+   "label": "Strict location (block on failed check-in)"
+  },
+  {
+   "default": "1",
+   "fieldname": "surveillance_recheck_enabled",
+   "fieldtype": "Check",
+   "label": "Allow mid-session re-check-in"
+  },
+  {
+   "default": "5",
+   "fieldname": "surveillance_verify_lockout_attempts",
+   "fieldtype": "Int",
+   "label": "Mandate code failures before lock"
+  },
+  {
+   "default": "2192",
+   "fieldname": "surveillance_retention_days",
+   "fieldtype": "Int",
+   "label": "Audit retention (days)"
   }
  ],
  "issingle": 1,

@@ -1,0 +1,55 @@
+{
+ "actions": [],
+ "creation": "2026-10-30 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "line_type",
+  "patient_identifier",
+  "visit_id",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "line_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Line Type",
+   "options": "patient\nvisit",
+   "reqd": 1
+  },
+  {
+   "description": "Patient identifier (CR ID / National ID, as supplied) when the line type is patient; resolution happens via the patient flow at surveillance time.",
+   "fieldname": "patient_identifier",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Patient Identifier",
+   "length": 64
+  },
+  {
+   "description": "The consent/records visit ID when the line type is visit.",
+   "fieldname": "visit_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Visit ID",
+   "length": 64
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "label": "Note"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Scope Line",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

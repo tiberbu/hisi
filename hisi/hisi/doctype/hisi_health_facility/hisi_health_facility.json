@@ -1,0 +1,127 @@
+{
+ "actions": [],
+ "autoname": "prompt",
+ "creation": "2026-10-30 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "name",
+  "company",
+  "facility_code",
+  "facility_fid",
+  "county",
+  "level",
+  "operational_status",
+  "license",
+  "geofence_section",
+  "latitude",
+  "longitude",
+  "surveillance_radius_km"
+ ],
+ "fields": [
+  {
+   "fieldname": "name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "registered_by",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Registered By",
+   "length": 140,
+   "search_index": 1,
+   "description": "Informational: the company whose dispatch first registered this facility. Registry rows are shared across all companies - this field applies no scoping."
+  },
+  {
+   "fieldname": "facility_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Facility Code",
+   "length": 64,
+   "search_index": 1
+  },
+  {
+   "fieldname": "facility_fid",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Facility FID",
+   "length": 64,
+   "search_index": 1
+  },
+  {
+   "fieldname": "county",
+   "fieldtype": "Data",
+   "label": "County"
+  },
+  {
+   "fieldname": "level",
+   "fieldtype": "Data",
+   "label": "Level"
+  },
+  {
+   "fieldname": "operational_status",
+   "fieldtype": "Data",
+   "label": "Operational Status"
+  },
+  {
+   "fieldname": "license",
+   "fieldtype": "Data",
+   "label": "License"
+  },
+  {
+   "fieldname": "geofence_section",
+   "fieldtype": "Section Break",
+   "label": "Geofence"
+  },
+  {
+   "fieldname": "latitude",
+   "fieldtype": "Float",
+   "label": "Latitude",
+   "reqd": 1
+  },
+  {
+   "fieldname": "longitude",
+   "fieldtype": "Float",
+   "label": "Longitude",
+   "reqd": 1
+  },
+  {
+   "description": "Per-facility geofence radius override in kilometres (resolution order: mandate radius, then this field, then the settings default). Never returned by any API.",
+   "fieldname": "surveillance_radius_km",
+   "fieldtype": "Float",
+   "label": "Surveillance Radius (km)"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Health Facility",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

@@ -126,25 +126,9 @@ app_license = "mit"
 # -----------
 # Permissions evaluated in scripted ways
 
-# Row-level access for organization-scoped documents (hisi/permissions.py):
-# platform roles see everything; vendor users are restricted to their own
-# organization's documents (the SHA validation workflow additionally allows
-# create/write within that scope).
-permission_query_conditions = {
-	"HISI Vendor Organization": "hisi.permissions.get_permission_query_conditions",
-	"HISI HMIS Product": "hisi.permissions.get_permission_query_conditions",
-	"HISI DHA Certification Reference": "hisi.permissions.get_permission_query_conditions",
-	"HISI SHA Validation Case": "hisi.permissions.get_permission_query_conditions",
-	"HISI Test Run": "hisi.permissions.get_permission_query_conditions",
-}
-
-has_permission = {
-	"HISI Vendor Organization": "hisi.permissions.has_permission",
-	"HISI HMIS Product": "hisi.permissions.has_permission",
-	"HISI DHA Certification Reference": "hisi.permissions.has_permission",
-	"HISI SHA Validation Case": "hisi.permissions.has_permission",
-	"HISI Test Run": "hisi.permissions.has_permission",
-}
+# No scripted permission hooks: every organization-scoped document carries a
+# Company link, and Frappe's native user permissions (Company) plus the
+# standard role matrices enforce row-level and role-level access.
 
 # Document Events
 # ---------------
@@ -178,6 +162,12 @@ has_permission = {
 # 		"hisi.tasks.monthly"
 # 	],
 # }
+
+scheduler_events = {
+	"daily": [
+		"hisi.api.surveillance.session.backfill_expired_sessions"
+	],
+}
 
 # Testing
 # -------
