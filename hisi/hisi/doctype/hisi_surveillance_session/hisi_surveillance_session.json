@@ -1,0 +1,181 @@
+{
+ "actions": [],
+ "autoname": "field:session_no",
+ "creation": "2026-10-30 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "session_no",
+  "mandate",
+  "company",
+  "user",
+  "status",
+  "started_at",
+  "ends_at",
+  "last_activity",
+  "checkin_section",
+  "location_status",
+  "checkin_distance_m",
+  "checkin_accuracy_m",
+  "checkin_location",
+  "device_meta",
+  "checkin_flags",
+  "report_section",
+  "summary",
+  "ended_at",
+  "surveiled_refs"
+ ],
+ "fields": [
+  {
+   "fieldname": "session_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Session No",
+   "reqd": 1
+  },
+  {
+   "fieldname": "mandate",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Mandate",
+   "options": "HISI Surveillance Mandate",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "search_index": 1,
+   "description": "ERPNext company that owns this record. Frappe's native Company user permissions scope row-level access per company."
+  },
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "default": "active",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "active\ncompleted\nexpired\nrevoked"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At"
+  },
+  {
+   "description": "Lazy TTL bound — started_at plus the session TTL from settings.",
+   "fieldname": "ends_at",
+   "fieldtype": "Datetime",
+   "label": "Ends At"
+  },
+  {
+   "description": "Updated on every in-session call; the idle timeout is measured from this.",
+   "fieldname": "last_activity",
+   "fieldtype": "Datetime",
+   "label": "Last Activity"
+  },
+  {
+   "fieldname": "checkin_section",
+   "fieldtype": "Section Break",
+   "label": "Check-in"
+  },
+  {
+   "fieldname": "location_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Location Status",
+   "options": "verified\nout_of_range\nspoofed\nunreported"
+  },
+  {
+   "description": "Metres from the facility centre at check-in — the distance of the client-reported coordinate, recorded in every outcome (review evidence).",
+   "fieldname": "checkin_distance_m",
+   "fieldtype": "Float",
+   "label": "Check-in Distance (m)"
+  },
+  {
+   "fieldname": "checkin_accuracy_m",
+   "fieldtype": "Float",
+   "label": "Check-in Accuracy (m)"
+  },
+  {
+   "description": "{lat, lng, ts, is_mock?, platform} as reported by the client.",
+   "fieldname": "checkin_location",
+   "fieldtype": "JSON",
+   "label": "Check-in Location"
+  },
+  {
+   "description": "{platform, app_version, ip, user_agent}.",
+   "fieldname": "device_meta",
+   "fieldtype": "JSON",
+   "label": "Device Meta"
+  },
+  {
+   "description": "List of active flags (e.g. [\"out_of_range\"], [\"idle_timeout\"], [\"audit_degraded\"]).",
+   "fieldname": "checkin_flags",
+   "fieldtype": "JSON",
+   "label": "Checkin Flags"
+  },
+  {
+   "fieldname": "report_section",
+   "fieldtype": "Section Break",
+   "label": "Report"
+  },
+  {
+   "description": "Officer's end-of-session notes (optional).",
+   "fieldname": "summary",
+   "fieldtype": "Long Text",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "ended_at",
+   "fieldtype": "Datetime",
+   "label": "Ended At"
+  },
+  {
+   "description": "Append-only: identifiers actually used during the session — patient/visit from scope and practitioner refs — written by the API on each in-scope call; part of the session report and export.",
+   "fieldname": "surveiled_refs",
+   "fieldtype": "JSON",
+   "label": "Surveiled Refs"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Session",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

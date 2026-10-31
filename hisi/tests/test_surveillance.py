@@ -9,6 +9,7 @@ from frappe.tests import IntegrationTestCase
 from hisi.api import patient, surveillance
 from hisi.api.response_handler import APIResponse
 from hisi.api.surveillance import location
+from hisi.utils import upsert_org_employee
 
 NAIROBI_LAT = -1.2833
 NAIROBI_LNG = 36.8219
@@ -141,18 +142,27 @@ class SurveillanceTestCase(IntegrationTestCase):
 		}).insert(ignore_permissions=True)
 		return email
 
-	def add_member(self, org, user):
-		doc = frappe.get_doc("HISI Payer Organization", org)
-		doc.append("members", {"doctype": "HISI Payer Organization Member", "user": user})
-		doc.save(ignore_permissions=True)
+	def add_member(self, company, user):
+		upsert_org_employee(user, company)
+
+	def org_company(self, company):
+		return company
 
 	def make_org(self, name):
-		doc = frappe.get_doc({
-			"doctype": "HISI Payer Organization",
-			"payer_code": name.upper().replace(" ", "-"),
-			"payer_name": name,
-		}).insert(ignore_permissions=True)
-		return doc.name
+		# An organization IS its ERPNext Company on this site, so the org id
+		# used across the tests is the Company name itself.
+		return self.ensure_company(name)
+
+	def ensure_company(self, name):
+		row = frappe.get_all("Company", filters={"company_name": name}, fields=["name"], limit=1)
+		if row:
+			return row[0].name
+		return frappe.get_doc({
+			"doctype": "Company",
+			"company_name": name,
+			"country": "Kenya",
+			"default_currency": "KES",
+		}).insert(ignore_permissions=True).name
 
 	def make_facility(self, name, lat=NAIROBI_LAT, lng=NAIROBI_LNG, radius_km=None):
 		doc = frappe.get_doc({
@@ -186,6 +196,7 @@ class SurveillanceTestCase(IntegrationTestCase):
 		self.set_settings(
 			base_url="https://api.dha.go.ke",
 			fetch_client="/client-registry/fetch-client",
+			fetch_facility="/v1/hwr/resource",
 			eligibility_check="/backend/api/v5/coverage/validate",
 			fetch_patient_consent="/v1/cmp/resource/Visit Consent",
 			consumer_key="KEY",
@@ -206,6 +217,8 @@ class SurveillanceTestCase(IntegrationTestCase):
 		)
 
 	def setUp(self):
+		super().setUp()
+		frappe.db.savepoint("surveillance_test")
 		self.set_settings(
 			surveillance_session_ttl_minutes=240,
 			surveillance_idle_timeout_minutes=30,
@@ -219,14 +232,21 @@ class SurveillanceTestCase(IntegrationTestCase):
 		self.set_dha_settings()
 		self.org = self.make_org("Acme Assurance")
 		self.org_b = self.make_org("Beta Assurance")
-		self.dispatcher = self.make_user("dispatcher@acme.example", ["HISI Insurance Provider"])
+		# No custom roles exist any more: access comes from the standard role
+		# matrices plus Company user permissions; these users are scoped through
+		# their Employee membership (add_member) or are plain members (officers).
+		self.dispatcher = self.make_user("dispatcher@acme.example", [])
 		self.add_member(self.org, self.dispatcher)
-		self.dispatcher_b = self.make_user("dispatcher@beta.example", ["HISI Insurance Provider"])
+		self.dispatcher_b = self.make_user("dispatcher@beta.example", [])
 		self.add_member(self.org_b, self.dispatcher_b)
-		self.officer = self.make_user("officer@acme.example", ["HISI Insurance Surveillance"])
-		self.other_officer = self.make_user("other@acme.example", ["HISI Insurance Surveillance"])
+		self.officer = self.make_user("officer@acme.example", [])
+		self.other_officer = self.make_user("other@acme.example", [])
 		self.facility = self.make_facility("Nairobi East Clinic")
 		self.facility_b = self.make_facility("Mombasa Coast Hospital", MOMBASA_LAT, MOMBASA_LNG)
+
+	def tearDown(self):
+		frappe.db.rollback(save_point="surveillance_test")
+		super().tearDown()
 
 	def issue_mandate(self, **overrides):
 		now = frappe.utils.now_datetime()
@@ -279,8 +299,8 @@ class TestGeofenceUnit(SurveillanceTestCase):
 
 	def test_haversine_nairobi_to_mombasa_band(self):
 		distance = location.haversine_m(NAIROBI_LAT, NAIROBI_LNG, MOMBASA_LAT, MOMBASA_LNG)
-		self.assertGreater(distance, 470_000)
-		self.assertLess(distance, 490_000)
+		self.assertGreater(distance, 430_000)
+		self.assertLess(distance, 450_000)
 
 	def test_radius_boundary_one_metre_inside_is_verified(self):
 		lat, lng = point_at_m(NAIROBI_LAT, NAIROBI_LNG, 999)
@@ -332,6 +352,14 @@ class TestGeofenceUnit(SurveillanceTestCase):
 
 	def test_radius_resolution_unset_settings_fail_fast(self):
 		self.assertRaises(APIResponse, location.resolve_radius_km, None, None, None)
+
+	def test_radius_resolution_stored_zero_is_unset_sentinel(self):
+		# Float columns are NOT NULL DEFAULT 0.0; an unset stored 0.0 must fall through
+		self.assertEqual(location.resolve_radius_km(0.0, 0.2, 1.0), 0.2)
+		self.assertEqual(location.resolve_radius_km(0.0, 0.0, 1.0), 1.0)
+
+	def test_radius_resolution_negative_still_rejected(self):
+		self.assertRaises(APIResponse, location.resolve_radius_km, -1.0, 0.7, 1.0)
 
 
 class TestAuditCompleteness(SurveillanceTestCase):
@@ -576,6 +604,21 @@ class TestAuditCompleteness(SurveillanceTestCase):
 		self.assertEqual(events[0]["event_type"], "sessions_listed")
 		self.assertIsNone(events[0]["session"])
 
+	def test_list_mandates_writes_mandate_listed(self):
+		self.issue_code()
+		frappe.set_user(self.dispatcher)
+		before = self.event_count()
+		surveillance.list_mandates()
+		self.assertEqual(frappe.local.response.get("status"), "success")
+		data = frappe.local.response["data"]
+		self.assertEqual(data["total"], 1)
+		self.assertEqual(data["mandates"][0]["status"], "dispatched")
+		self.assertGreaterEqual(data["mandates"][0]["scope_counts"]["patient"], 1)
+		events = self.new_events(before)
+		self.assertEqual(len(events), 1)
+		self.assertEqual(events[0]["event_type"], "mandate_listed")
+		self.assertIsNone(events[0]["session"])
+
 	def test_get_session_audit_writes_audit_viewed(self):
 		code = self.issue_code()
 		self.start_session(code)
@@ -621,7 +664,7 @@ class TestAuditCompleteness(SurveillanceTestCase):
 			frappe.set_user(self.officer)
 			surveillance.get_facility(session_id=session_no)
 		self.assertEqual(frappe.local.response.get("status"), "success")
-		flags = frappe.get_all("HISI Surveillance Session", filters={"session_no": session_no}, pluck="flags")[0]
+		flags = frappe.get_all("HISI Surveillance Session", filters={"session_no": session_no}, pluck="checkin_flags")[0]
 		self.assertIn("audit_degraded", json.loads(flags or "[]"))
 		self.assertTrue(frappe.get_all("Error Log", fields=["name"], limit=1))
 
@@ -649,8 +692,8 @@ class TestMandateLifecycle(SurveillanceTestCase):
 		self.assertRegex(data["short_code"], "^[0-9A-F]{8}$")
 		self.assertIn("hisi.api.surveillance/verify_mandate?code=" + data["short_code"], data["qr_url"])
 		self.assertTrue(data["signature"])
-		rows = frappe.get_all("HISI Surveillance Mandate", filters={"short_code": data["short_code"]}, fields=["payer_org", "status"])
-		self.assertEqual(rows[0]["payer_org"], self.org)
+		rows = frappe.get_all("HISI Surveillance Mandate", filters={"short_code": data["short_code"]}, fields=["company", "status"])
+		self.assertEqual(rows[0]["company"], self.org)
 		self.assertEqual(rows[0]["status"], "dispatched")
 
 	def test_second_issue_gives_distinct_code_and_signature(self):
@@ -671,45 +714,48 @@ class TestMandateLifecycle(SurveillanceTestCase):
 		surveillance.issue_mandate(facility=self.facility, assigned_officer="ghost@example.com", reason="x", scope_lines=[{"line_type": "patient", "patient_identifier": "36637305"}], valid_from=valid_from, expires_at=expires_at)
 		self.assertEqual(frappe.local.response.get("code"), "BAD_REQUEST")
 
-	def test_new_facility_created_on_issue(self):
-		frappe.set_user(self.dispatcher)
-		surveillance.issue_mandate(
-			facility="HFI-NEW-001",
-			facility_detail={
-				"name": "Kikuyu Gate Clinic",
-				"facility_code": "KE-KGC-0001",
-				"county": "Nairobi",
-				"level": "Clinic",
-				"operational_status": "Active",
-				"license": "Lic 1/2026",
-				"lat": NAIROBI_LAT,
-				"lng": NAIROBI_LNG,
-			},
-			assigned_officer=self.officer,
-			reason="x",
-			scope_lines=[{"line_type": "patient", "patient_identifier": "36637305"}],
-			valid_from=valid_window()[0],
-			expires_at=valid_window()[1],
-		)
+	def test_new_facility_created_from_registry_on_issue(self):
+		registry_row = {
+			"facility_name": "Kikuyu Gate Clinic",
+			"facility_code": "KE-KGC-0001",
+			"facility_fid": "FID-KGC-1",
+			"operational_status": "Active",
+			"latitude": NAIROBI_LAT,
+			"longitude": NAIROBI_LNG,
+		}
+		with patch("hisi.api.surveillance.mandate.http_get", return_value=[registry_row]) as mocked:
+			frappe.set_user(self.dispatcher)
+			surveillance.issue_mandate(
+				facility="Kikuyu Gate Clinic",
+				assigned_officer=self.officer,
+				reason="x",
+				scope_lines=[{"line_type": "patient", "patient_identifier": "36637305"}],
+				valid_from=valid_window()[0],
+				expires_at=valid_window()[1],
+			)
 		self.assertEqual(frappe.local.response.get("status"), "success")
-		rows = frappe.get_all("HISI Health Facility", filters={"facility_code": "KE-KGC-0001"}, fields=["latitude", "longitude"])
+		rows = frappe.get_all("HISI Health Facility", filters={"facility_code": "KE-KGC-0001"}, fields=["name", "latitude", "longitude", "registered_by"])
 		self.assertEqual(len(rows), 1)
+		self.assertEqual(rows[0]["name"], "Kikuyu Gate Clinic")
 		self.assertEqual(rows[0]["latitude"], NAIROBI_LAT)
 		self.assertEqual(rows[0]["longitude"], NAIROBI_LNG)
+		self.assertEqual(rows[0]["registered_by"], self.org)
+		self.assertTrue(mocked.called)
 
-	def test_new_facility_without_coordinates_rejected(self):
-		frappe.set_user(self.dispatcher)
-		surveillance.issue_mandate(
-			facility="HFI-NEW-002",
-			facility_detail={"name": "No Coordinates Clinic", "facility_code": "KE-NCC-0001"},
-			assigned_officer=self.officer,
-			reason="x",
-			scope_lines=[{"line_type": "patient", "patient_identifier": "36637305"}],
-			valid_from=valid_window()[0],
-			expires_at=valid_window()[1],
-		)
+	def test_new_facility_not_in_registry_rejected(self):
+		with patch("hisi.api.surveillance.mandate.http_get", return_value=[]) as mocked:
+			frappe.set_user(self.dispatcher)
+			surveillance.issue_mandate(
+				facility="No Coordinates Clinic",
+				assigned_officer=self.officer,
+				reason="x",
+				scope_lines=[{"line_type": "patient", "patient_identifier": "36637305"}],
+				valid_from=valid_window()[0],
+				expires_at=valid_window()[1],
+			)
 		self.assertEqual(frappe.local.response.get("code"), "BAD_REQUEST")
-		self.assertEqual(frappe.get_all("HISI Health Facility", filters={"facility_code": "KE-NCC-0001"}), [])
+		self.assertEqual(frappe.get_all("HISI Health Facility", filters={"name": "No Coordinates Clinic"}), [])
+		self.assertTrue(mocked.called)
 
 	def test_expired_mandate_is_invalid_and_flips_lazy(self):
 		now = frappe.utils.now_datetime()
@@ -814,9 +860,9 @@ class TestSessionLifecycle(SurveillanceTestCase):
 		surveillance.start_session(mandate_code=code, location=checkin(MOMBASA_LAT, MOMBASA_LNG), device={"app_version": "1.4.2", "user_agent": "test-agent"})
 		self.assertEqual(frappe.local.response.get("status"), "success")
 		session_no = frappe.local.response["data"]["session_no"]
-		rows = frappe.get_all("HISI Surveillance Session", filters={"session_no": session_no}, fields=["location_status", "flags"])
+		rows = frappe.get_all("HISI Surveillance Session", filters={"session_no": session_no}, fields=["location_status", "checkin_flags"])
 		self.assertEqual(rows[0]["location_status"], "out_of_range")
-		self.assertIn("out_of_range", json.loads(rows[0]["flags"] or "[]"))
+		self.assertIn("out_of_range", json.loads(rows[0]["checkin_flags"] or "[]"))
 
 	def test_facility_radius_beats_settings_default(self):
 		facility = self.make_facility("Tight Radius Clinic", radius_km=0.2)
@@ -871,8 +917,8 @@ class TestSessionLifecycle(SurveillanceTestCase):
 		surveillance.recheck_location(session_id=session_no, location=checkin(MOMBASA_LAT, MOMBASA_LNG), device={"app_version": "1.4.2", "user_agent": "test-agent"})
 		data = frappe.local.response["data"]
 		self.assertIn("impossible_move", data["flagged"])
-		rows = frappe.get_all("HISI Surveillance Session", filters={"session_no": session_no}, fields=["flags"])
-		self.assertIn("impossible_move", json.loads(rows[0]["flags"] or "[]"))
+		rows = frappe.get_all("HISI Surveillance Session", filters={"session_no": session_no}, fields=["checkin_flags"])
+		self.assertIn("impossible_move", json.loads(rows[0]["checkin_flags"] or "[]"))
 
 	def test_recheck_disabled_is_bad_request(self):
 		self.set_settings(surveillance_recheck_enabled=0)
@@ -955,7 +1001,7 @@ class TestIntegrationMockedUpstream(SurveillanceTestCase):
 		data = frappe.local.response["data"]
 		self.assertEqual(data["cr_id"], "9000001")
 		self.assertEqual(data["steps"], ["patient"])
-		self.assertEqual(data["results"]["patient"]["cr_id"], "CR2473157540001-1")
+		self.assertEqual(data["results"]["patient"]["cr_id"], "9000001")
 		self.assertEqual(data["results"]["patient"]["name"], "Amani Otieno")
 		self.assertTrue(data["simulation"])
 
@@ -967,9 +1013,9 @@ class TestIntegrationMockedUpstream(SurveillanceTestCase):
 			patient.requests, "post", return_value=http_response(eligibility_payload())
 		):
 			frappe.set_user(self.officer)
-			surveillance.surveil_patient(session_id=session_no, steps=["patient", "eligibility", "consent", "records"], filters={"identification_type": "National ID", "identification_number": "36637305"})
+			surveillance.surveil_patient(session_id=session_no, steps=["patient", "eligibility", "consent", "records"], filters={"identification_type": "CR ID", "identification_number": "36637305"})
 		data = frappe.local.response["data"]
-		self.assertEqual(sorted(data["results"]), ["patient", "eligibility", "consent", "records"])
+		self.assertEqual(set(data["results"]), {"patient", "eligibility", "consent", "records"})
 		self.assertEqual(data["results"]["records"]["visit_id"], "d7fd81f8-bb9f-4f5d-8a8e-fc12014aa0d6")
 		self.assertEqual([r.get("resourceType") for r in data["results"]["records"]["records"]], ["Encounter", "Condition"])
 
@@ -982,7 +1028,7 @@ class TestIntegrationMockedUpstream(SurveillanceTestCase):
 			patient.requests, "post", return_value=http_response(eligibility_payload())
 		):
 			frappe.set_user(self.officer)
-			surveillance.surveil_patient(session_id=session_no, steps=["patient", "eligibility", "consent", "records"], filters={"identification_type": "National ID", "identification_number": "36637305"})
+			surveillance.surveil_patient(session_id=session_no, steps=["patient", "eligibility", "consent", "records"], filters={"identification_type": "CR ID", "identification_number": "36637305"})
 		events = self.new_events(before)
 		self.assertEqual([e["event_type"] for e in events], ["patient_viewed", "eligibility_viewed", "consent_viewed", "records_viewed"])
 		self.assertTrue(all(e["outcome"] == "ok" for e in events))
@@ -1035,3 +1081,161 @@ class TestIntegrationMockedUpstream(SurveillanceTestCase):
 		targets = data["surveiled_targets"]
 		self.assertEqual(targets["facility"]["name"], "Nairobi East Clinic")
 		self.assertEqual([p["record_id"] for p in targets["practitioners"]], [practitioner])
+
+
+class TestFacilitySearch(SurveillanceTestCase):
+	"""Mandate dispatch facility lookup: DHA register via HISI Settings."""
+
+	def _search(self, term):
+		surveillance.search_facilities(term=term)
+
+	def test_search_requires_term(self):
+		frappe.set_user(self.dispatcher)
+		self._search("")
+		self.assertEqual(frappe.local.response.get("code"), "BAD_REQUEST")
+
+	def test_search_maps_fields_and_query_shape(self):
+		payload = [
+			{
+				"facility_name": "Nairobi Level 5 Hospital",
+				"facility_code": "KE-N5-0001",
+				"facility_fid": "FID-N5-1",
+				"operational_status": "Active",
+				"latitude": -1.2921,
+				"longitude": 36.7767,
+			},
+			{"facility_name": "Nairobi East Clinic", "facility_code": "KE-NEC-0001"},
+			{"not_a_facility": True},
+		]
+		with patch("hisi.api.surveillance.facilities.http_get", return_value=payload) as mocked:
+			frappe.set_user(self.dispatcher)
+			self._search("nairobi")
+		self.assertEqual(frappe.local.response.get("status"), "success")
+		data = frappe.local.response["data"]
+		self.assertEqual(data["total"], 2)
+		self.assertEqual(data["facilities"][0]["facility_name"], "Nairobi Level 5 Hospital")
+		self.assertEqual(data["facilities"][0]["facility_fid"], "FID-N5-1")
+		self.assertEqual(data["facilities"][1]["latitude"], None)
+		(url, params) = mocked.call_args[0]
+		self.assertEqual(url, "https://uat.dha.go.ke/v1/hwr/resource/Health Facility")
+		self.assertEqual(params["filters"], '[["facility_name", "like", "%nairobi%"]]')
+		self.assertEqual(params["order_by"], "facility_name asc")
+		self.assertEqual(params["limit_page_length"], 20)
+		self.assertEqual(params["limit_start"], 0)
+
+	def test_search_uses_production_base_when_simulation_off(self):
+		self.set_settings(enable_uat_simulation=0)
+		with patch("hisi.api.surveillance.facilities.http_get", return_value=[]) as mocked:
+			frappe.set_user(self.dispatcher)
+			self._search("nairobi")
+		self.assertEqual(mocked.call_args[0][0], "https://api.dha.go.ke/v1/hwr/resource/Health Facility")
+
+	def test_search_unconfigured_path_bad_request(self):
+		self.set_settings(fetch_facility="")
+		frappe.set_user(self.dispatcher)
+		self._search("nairobi")
+		self.assertEqual(frappe.local.response.get("code"), "BAD_REQUEST")
+
+	def test_search_requires_payer_membership(self):
+		frappe.set_user(self.officer)
+		with patch("hisi.api.surveillance.facilities.http_get") as mocked:
+			self._search("nairobi")
+		self.assertEqual(frappe.local.response.get("code"), "FORBIDDEN")
+		self.assertFalse(mocked.called)
+
+	def test_search_writes_facilities_searched_event(self):
+		frappe.set_user(self.dispatcher)
+		before = self.event_count()
+		with patch("hisi.api.surveillance.facilities.http_get", return_value=[]):
+			self._search("mombasa")
+		events = self.new_events(before)
+		self.assertEqual(len(events), 1)
+		self.assertEqual(events[0]["event_type"], "facilities_searched")
+		self.assertEqual(events[0]["target_type"], "facility")
+		self.assertIsNone(events[0]["session"])
+
+
+class TestMultiCompanySharedTarget(SurveillanceTestCase):
+	"""Two payer companies surveilling the same facility / its practitioners:
+	the target registry is shared; mandates, sessions and audit stay per-company."""
+
+	def test_second_company_issues_on_same_facility_row(self):
+		self.issue_mandate()
+		frappe.set_user(self.dispatcher_b)
+		surveillance.issue_mandate(
+			facility=self.facility,
+			assigned_officer=self.officer,
+			reason="Suspicion on claim CLM-2026-0442",
+			scope_lines=[{"line_type": "patient", "patient_identifier": "36637305"}],
+			valid_from=valid_window()[0],
+			expires_at=valid_window()[1],
+		)
+		self.assertEqual(frappe.local.response.get("status"), "success")
+		rows = frappe.get_all("HISI Surveillance Mandate", fields=["company", "facility"])
+		self.assertEqual(sorted([r["company"] for r in rows]), sorted([self.org, self.org_b]))
+		# one shared facility row - no per-company duplicate
+		self.assertEqual(frappe.db.count("HISI Health Facility", filters={"name": self.facility}), 1)
+
+	def test_cross_company_session_and_audit_wall(self):
+		code = self.issue_code()
+		self.start_session(code)
+		session_no = frappe.local.response["data"]["session_no"]
+		# Beta cannot audit or list Acme sessions
+		frappe.set_user(self.dispatcher_b)
+		surveillance.get_session_audit(session_id=session_no)
+		self.assertEqual(frappe.local.response.get("code"), "FORBIDDEN")
+		surveillance.list_sessions()
+		self.assertEqual(frappe.local.response["data"]["total"], 0)
+		# Acme sees its own
+		frappe.set_user(self.dispatcher)
+		surveillance.list_sessions()
+		self.assertEqual(frappe.local.response["data"]["total"], 1)
+		surveillance.get_session_audit(session_id=session_no)
+		self.assertEqual(frappe.local.response.get("status"), "success")
+
+	def test_non_member_listing_blocked(self):
+		frappe.set_user(self.officer)  # not a member of any company
+		surveillance.list_sessions()
+		self.assertEqual(frappe.local.response.get("code"), "FORBIDDEN")
+		surveillance.list_mandates()
+		self.assertEqual(frappe.local.response.get("code"), "FORBIDDEN")
+
+	def test_shared_practitioner_row_across_companies(self):
+		self.set_settings(fetch_practitioner="/v1/hwr/resource")
+		registry_rows = [
+			{
+				"name": "Dr. A. Wanjiku",
+				"cadre": "Medical Officer",
+				"regulator": "KMPDC",
+				"registration_number": "KMPDC/4471",
+				"facility_name": self.facility,
+			}
+		]
+		code = self.issue_code()
+		self.start_session(code)
+		session_no = frappe.local.response["data"]["session_no"]
+		frappe.set_user(self.officer)
+		with patch("hisi.api.surveillance.api.http_get", return_value=registry_rows) as mocked:
+			surveillance.list_practitioners(session_id=session_no)
+		self.assertEqual(frappe.local.response.get("status"), "success")
+		self.assertEqual([p["record_id"] for p in frappe.local.response["data"]["practitioners"]], ["Dr. A. Wanjiku"])
+		self.assertTrue(mocked.called)
+		# Beta session on the same facility: local row exists, registry not consulted
+		frappe.set_user(self.dispatcher_b)
+		surveillance.issue_mandate(
+			facility=self.facility,
+			assigned_officer=self.officer,
+			reason="x",
+			scope_lines=[{"line_type": "patient", "patient_identifier": "36637305"}],
+			valid_from=valid_window()[0],
+			expires_at=valid_window()[1],
+		)
+		code_b = frappe.local.response["data"]["short_code"]
+		frappe.set_user(self.officer)
+		self.start_session(code_b)
+		session_no_b = frappe.local.response["data"]["session_no"]
+		with patch("hisi.api.surveillance.api.http_get") as mocked2:
+			surveillance.list_practitioners(session_id=session_no_b)
+		self.assertEqual([p["record_id"] for p in frappe.local.response["data"]["practitioners"]], ["Dr. A. Wanjiku"])
+		self.assertFalse(mocked2.called)
+		self.assertEqual(frappe.db.count("HISI Professional Record"), 1)

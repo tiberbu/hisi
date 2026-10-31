@@ -9,6 +9,7 @@ from frappe.utils.oauth import get_oauth2_authorize_url
 from frappe.utils.password import get_password_reset_limit
 
 from hisi.api.response_handler import APIResponse, BadRequest, api_endpoint
+from hisi.utils import active_companies, has_organization
 
 MAX_DISPLAY_NAME_LENGTH = 140
 PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9\s\-()]{4,19}$")
@@ -97,9 +98,17 @@ def get_my_profile() -> dict:
 		frappe.db.get_value("User", user, ["full_name", "email"], as_dict=True)
 		or frappe._dict()
 	)
+	roles = [role for role in frappe.get_roles(user) if role not in ("All", "Guest")]
+	organizations = []
+	for company in active_companies(user):
+		organizations.append(
+			{"id": company, "name": frappe.db.get_value("Company", company, "company_name") or company, "kind": "company"}
+		)
 	APIResponse.success(data = {
 		"email": user_row.get("email") or user,
-		"fullName": user_row.get("full_name") or user
+		"fullName": user_row.get("full_name") or user,
+		"roles": roles,
+		"organizations": organizations,
 	})
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -136,7 +145,17 @@ def login(usr: str = "", pwd: str = "", otp: str = "", tmp_id: str = "") -> dict
 			"verification": frappe.local.response.get("verification"),
 		}
 
-	return {"user": frappe.local.login_manager.user, "message": "Logged In"}
+	# Login-time organization mandate: a user that is not tied to any
+	# organization (no active Employee on any Company) gets no usable
+	# session - the sign-in surface shows the block message instead.
+	user = frappe.local.login_manager.user
+	if not has_organization(user):
+		frappe.local.login_manager.logout()
+		return {
+			"status": "no_organization",
+			"message": "This account is not linked to an organization. Ask your organization administrator to add you, then sign in again.",
+		}
+	return {"user": user, "message": "Logged In"}
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=get_password_reset_limit, seconds=60 * 60)

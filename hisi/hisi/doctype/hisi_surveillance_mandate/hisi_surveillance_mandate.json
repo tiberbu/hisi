@@ -1,0 +1,195 @@
+{
+ "actions": [],
+ "autoname": "field:mandate_no",
+ "creation": "2026-10-30 00:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "mandate_no",
+  "company",
+  "dispatched_by",
+  "assigned_officer",
+  "facility",
+  "reason",
+  "scope_lines",
+  "validity_section",
+  "valid_from",
+  "expires_at",
+  "status",
+  "verification_section",
+  "short_code",
+  "qr_url",
+  "radius_km",
+  "location_policy",
+  "signature",
+  "verify_attempts",
+  "verify_locked"
+ ],
+ "fields": [
+  {
+   "fieldname": "mandate_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Mandate No",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1,
+   "search_index": 1,
+   "description": "The payer company issuing the mandate. Row scoping runs through this Company via active Employee records."
+  },
+  {
+   "fieldname": "dispatched_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Dispatched By",
+   "options": "User"
+  },
+  {
+   "fieldname": "assigned_officer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Assigned Officer",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "facility",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Facility",
+   "options": "HISI Health Facility",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Why this surveillance was dispatched (claim reference, suspicion basis) — the claim stays context here, never a data surface.",
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "reqd": 1
+  },
+  {
+   "description": "The in-scope patient/visit identifiers this mandate covers (at least one line).",
+   "fieldname": "scope_lines",
+   "fieldtype": "Table",
+   "label": "Scope Lines",
+   "options": "HISI Surveillance Scope Line",
+   "reqd": 1
+  },
+  {
+   "fieldname": "validity_section",
+   "fieldtype": "Section Break",
+   "label": "Validity"
+  },
+  {
+   "fieldname": "valid_from",
+   "fieldtype": "Datetime",
+   "label": "Valid From"
+  },
+  {
+   "fieldname": "expires_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Expires At",
+   "reqd": 1
+  },
+  {
+   "default": "dispatched",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "dispatched\nactive\ncompleted\nrevoked\nexpired"
+  },
+  {
+   "fieldname": "verification_section",
+   "fieldtype": "Section Break",
+   "label": "Verification"
+  },
+  {
+   "description": "Unguessable 8-char code (secrets.token_hex(4) uppercased) — the QR payload; returned in full only to the issuer.",
+   "fieldname": "short_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Short Code",
+   "unique": 1,
+   "search_index": 1
+  },
+  {
+   "description": "Deep link to the mandate verification flow for the officer's scan handler.",
+   "fieldname": "qr_url",
+   "fieldtype": "Data",
+   "label": "QR URL",
+   "length": 512
+  },
+  {
+   "description": "Optional per-mandate geofence override in kilometres (else: facility radius, then settings default).",
+   "fieldname": "radius_km",
+   "fieldtype": "Float",
+   "label": "Radius (km)"
+  },
+  {
+   "description": "Per-mandate override of the settings location policy: strict blocks an off-fence check-in, flag records and continues.",
+   "fieldname": "location_policy",
+   "fieldtype": "Select",
+   "label": "Location Policy",
+   "options": "strict\nflag"
+  },
+  {
+   "description": "HMAC-SHA256 over the mandate binding fields with the site key — tamper-evidence for exports.",
+   "fieldname": "signature",
+   "fieldtype": "Data",
+   "label": "Signature",
+   "length": 128,
+   "read_only": 1
+  },
+  {
+   "description": "Consecutive failed verify_mandate attempts for this code; resets on a successful verification.",
+   "fieldname": "verify_attempts",
+   "fieldtype": "Int",
+   "label": "Verify Attempts"
+  },
+  {
+   "description": "Set once the strike count reaches the lockout threshold; while set, every verification attempt is rejected, including the assigned officer.",
+   "fieldname": "verify_locked",
+   "fieldtype": "Check",
+   "label": "Verify Locked"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Mandate",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

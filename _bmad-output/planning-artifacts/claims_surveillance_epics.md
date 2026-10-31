@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Source spec** | `claims_surveillance_feature_spec.md` — DRAFT; Q1/Q3/Q4/Q5 locked 2026-10-30 (in-platform dispatch, strict default, dedicated `surveillance_radius_km`, mobile web v1); **local rebuild locked 2026-10-30** (facility/practitioner doctypes built inside the hisi app — no claim doctypes; no global_mediator / healthpro reliance); **payer registry locked 2026-10-30** (`HISI Payer Organization` doctype + `HISI Insurance Provider` role — spec §7.5, payer = role + doctype); Q10 + remainder pending |
+| **Source spec** | `claims_surveillance_feature_spec.md` — DRAFT; Q1/Q3/Q4/Q5 locked 2026-10-30 (in-platform dispatch, strict default, dedicated `surveillance_radius_km`, mobile web v1); **local rebuild locked 2026-10-30** (facility/practitioner doctypes built inside the hisi app — no claim doctypes; no global_mediator / healthpro reliance); **payer model locked 2026-10-30, refined 2026-10-31** (payer = role + doctype → **native `Company` + active `Employee`**; the interim `HISI Payer Organization` doctype was retired and removed — spec §7.5); Q10 confirmed 2026-10-30 (draft v1 split) |
 | **App** | `hisi` (module `Hisi`) + `hisi_app` (Next.js, Epic 4) |
-| **Date** | 2026-10-30 |
-| **Status** | Ready for implementation after Q10 confirmation (see R5); zero code exists for this feature yet |
+| **Date** | 2026-10-30 (revised 2026-10-31) |
+| **Status** | Q10 confirmed 2026-10-30 (draft split); **Epics 0–3 implemented + verified 2026-10-30** (full app suite **120/120 green** on hisi-local); **Epic 4 in flight 2026-10-30** — S4.1 done (12 `surveillance.*` operations + zod schemas + wire types in hisi_app; the dead `surveillance.summary` drift entry removed; typecheck clean), S4.2 done (`/dashboard/surveillance` officer workspace: verify → geofenced check-in → patient journey / facility / practitioners → end session; nav + `SurveillanceIcon` added) ; S4.3 done 2026-10-31 (`list_mandates` — contract §3.13; **officer onboarding**: /dashboard/team page + Team nav section after Insight, list-payer-members / onboard-officer / remove-officer wired — the emailed one-time code is the initial password; **payer model refined to native `Company` + active `Employee`** — interim `HISI Payer Organization` doctype retired and removed, no scripted permission hooks (native `User Permission` + role matrix); registries registry-confirmed at dispatch — `search_facilities` + `list_practitioners` back-fill; event catalog now 28 values; module suite green)) |
 | **Conventions** | All spec §-references point at the feature spec. House rules (§17) apply to every story: single response layer (`response_handler.py` + `api_endpoint`), no docstrings, no private names, one blank line between functions, pydantic at boundaries, no tunable constants in code (HISI Settings), responses only via `APIResponse`. |
 
 **Execution order:** Epic 0 first (doctype + settings + audit writer — everything depends on it). Epic 1 before 2 (verify → session). Epic 3 after 2 (scope gate + surveillance endpoints). Epic 4 (UI) can start at S4.1 in parallel once the corresponding Epic 1–3 endpoints land per-operation. Epic 5 last.
@@ -18,18 +18,18 @@
 
 *Goal: the data model installs cleanly and every later story builds on the append-only event writer and the payer-scoped permission hooks.*
 
-### S0.1 Roles + doctypes (incl. the payer registry)
-- **Deliver:** roles `HISI Insurance Provider` (who dispatches) / `HISI Insurance Surveillance` (who goes to surveillance) — the two v1 surveillance roles (created via install/seed, the `seed.py` pattern); the review surface sits on the Dispatcher, a read-only `Reviewer` role is a later option, not v1; doctypes `HISI Surveillance Mandate` (+ child `HISI Surveillance Scope Line`), `HISI Surveillance Session`, `HISI Surveillance Event` with all §7 fields, plus `HISI Payer Organization` (+ child `HISI Payer Organization Member`, §7.5 — the payer is the `HISI Insurance Provider` role **and** this registry doctype, separate from the SHA-pipeline `HISI Vendor Organization`) and the `is_payer_member` helper in `hisi/utils.py`; permission matrix per §8.6 L1 — including **no delete on Event for any role** and **no officer doctype access** to mandate/session.
-- **Accept:** `bench migrate` on `hisi-local` clean; Event doctype exposes no delete path (permission query + direct `frappe.delete_doc` as officer → PermissionError); officer has zero Desk access to mandates; a payer org + member row installs and `is_payer_member` resolves membership.
+### S0.1 Roles + doctypes (incl. the payer model)
+- **Deliver:** roles `HISI Insurance Provider` (who dispatches) / `HISI Insurance Surveillance` (who goes to surveillance) — the two v1 surveillance roles (created via install/seed, the `seed.py` pattern); the review surface sits on the Dispatcher, a read-only `Reviewer` role is a later option, not v1; doctypes `HISI Surveillance Mandate` (+ child `HISI Surveillance Scope Line`), `HISI Surveillance Session`, `HISI Surveillance Event` with all §7 fields, each carrying a `company` Link (2026-10-31). Payer model: **the interim `HISI Payer Organization` (+ member child) doctype was retired and removed 2026-10-31** — the payer is the `HISI Insurance Provider` role + the native `Company` / active `Employee` pair (§7.5), with `active_companies` / `is_company_member` in `hisi/utils.py`; permission matrix per §8.6 L1 — including **no delete on Event for any role** and **no officer doctype access** to any surveillance doctype.
+- **Accept:** `bench migrate` on `hisi-local` clean; Event doctype exposes no delete path (permission query + direct `frappe.delete_doc` as officer → PermissionError); officer has zero Desk access to mandates; a `Company` + active `Employee` resolves through `is_company_member`.
 - **Deps:** none. **Size:** M.
 
 ### S0.2 HISI Settings — Surveillance tab
-- **Deliver:** `hisi_settings.json` gains the §12 tab + 9 fields with defaults (TTL 240, idle 30, radius 1.0, accuracy 200, strict 1, recheck 1, lockout 5, retention 2192).
+- **Deliver:** `hisi_settings.json` gains the §12 tab + 8 fields with defaults (TTL 240, idle 30, radius 1.0, accuracy 200, strict 1, recheck 1, lockout 5, retention 2192).
 - **Accept:** fields persist across bench restart; unset-required fail-fast paths return the named `BAD_REQUEST` (unit probe per field).
 - **Deps:** none (parallel-safe with S0.1). **Size:** S.
 
 ### S0.3 Local rebuild — `HISI Health Facility` / `HISI Professional Record` (no claim doctypes)
-- **Deliver:** two new standalone doctypes in the hisi app (local rebuild, spec §2.4 + Q13 — **no cross-app dependency, no claim doctypes**): `HISI Health Facility` (name, facility code/fid, county, level, operational status, license; `latitude`/`longitude` Float precision 7; `surveillance_radius_km` Float — the Q4 field lives here); `HISI Professional Record` (name, cadre, regulator, registration number, `facility` Link → `HISI Health Facility`). **Surveilled-only semantics:** rows exist only for facilities named in a mandate / practitioners of surveilled facilities; the UI surfaces nothing else; the surveilled-only property is also captured in the report — the `get_session_audit` export carries a `surveiled_targets` block (mandate facility + its practitioners). Permissions: System Manager full; Dispatcher read (payer-scoped per S0.5); **no officer doctype access** (API only, §8.6 L1).
+- **Deliver:** two new standalone doctypes in the hisi app (local rebuild, spec §2.4 + Q13 — **no cross-app dependency, no claim doctypes**): `HISI Health Facility` (name, facility code/fid, county, level, operational status, license; `latitude`/`longitude` Float precision 7; `surveillance_radius_km` Float — the Q4 field lives here); `HISI Professional Record` (name, cadre, regulator, registration number, `facility` Link → `HISI Health Facility`). **Surveilled-only semantics:** rows exist only for facilities named in a mandate / practitioners of surveilled facilities; the UI surfaces nothing else; the surveilled-only property is also captured in the report — the `get_session_audit` export carries a `surveiled_targets` block (mandate facility + its practitioners). Permissions (2026-10-31 matrix): System Manager full; Desk User read; **no officer doctype access** (API only, §8.6 L1); row scoping native via `company` + `User Permission` (S0.5 as revised).
 - **Accept:** `bench migrate` clean; radius field present (empty sites read `None` → falls through the §9.1 order); grep assertion: no `healthpro`/`global_mediator` doctype name or module reference, and no claim doctype, anywhere in `hisi/api/surveillance/`.
 - **Deps:** none. **Size:** S.
 
@@ -38,10 +38,10 @@
 - **Accept:** every event row carries who/what/when/where/outcome; a simulated insert failure produces the `audit_degraded` flag + an `Error Log` row and the API call still returns; append-only assertion (15.2 seed).
 - **Deps:** S0.1. **Size:** M.
 
-### S0.5 Payer-scoped permission hooks
-- **Deliver:** `hisi/permissions.py` extension (or sibling module, same pattern): `has_permission` + `get_permission_query_conditions` for the four doctypes — Dispatcher scoped to `payer_org` via `is_payer_member` (`HISI Payer Organization Member` — separate from the vendor-side `HISI Organization Member`); officer scoped to `doc.user == frappe.session.user`; platform roles full.
-- **Accept:** cross-payer list queries return 0 rows; officer sees only own sessions; matrix tests per §15 (S5.2).
-- **Deps:** S0.1. **Size:** M.
+### S0.5 Payer scoping — native `User Permission` (revised 2026-10-31; scripted hooks dropped)
+- **Deliver:** no `hisi/permissions.py` extension — the 2026-10-31 model makes row scoping native: the `company` Link on Mandate / Session / Event (and the local rebuild doctypes) + the `User Permission` on `Company` auto-created when the member's `Employee` is upserted (`create_user_permission = 1`); membership helpers `active_companies` / `is_company_member` in `hisi/utils.py`; officer scoping stays API-level (`require_session`, `doc.user == frappe.session.user`).
+- **Accept:** cross-company list queries return 0 rows (native `User Permission` + the API filters agree); officer sees only own sessions via the API; matrix tests per §15 (S5.2).
+- **Deps:** S0.1. **Size:** S (down from M — no hook code).
 
 ---
 
@@ -50,7 +50,7 @@
 *Goal: the insurer's dispatch is provable — a mandate exists, names an officer, a facility, a scope, a window, and an unguessable code.*
 
 ### S1.1 `issue_mandate`
-- **Deliver:** Dispatcher endpoint (§8.1): facility + ≥1 scope line + officer + window (+ optional radius/policy); generates `short_code` = `secrets.token_hex(4)` uppercased, `qr_url` deep link, `signature` HMAC over the §7 fields; status `dispatched`; `mandate_issued` event.
+- **Deliver:** Dispatcher endpoint (§8.1): facility + ≥1 scope line + officer + window (+ optional radius/policy); the facility is **registry-confirmed** (exact DHA register match — a new facility's local row auto-creates from the register row, 2026-10-31); generates `short_code` = `secrets.token_hex(4)` uppercased, `qr_url` deep link, `signature` HMAC over the §7 fields; status `dispatched`; `mandate_issued` event.
 - **Accept:** AC-1 inputs; response carries code + QR + signature; a second issue with the same scope is allowed (distinct mandates); non-Dispatcher or cross-payer call → 403 + `scope_denied` event.
 - **Deps:** Epic 0. **Size:** M.
 
@@ -111,7 +111,7 @@
 - **Deps:** none. **Size:** —.
 
 ### S3.4 `get_facility` / `list_practitioners`
-- **Deliver:** `get_facility` — `HISI Health Facility` detail (license, operational status, level; geofence internals never returned); `list_practitioners` — `HISI Professional Record` rows of the surveilled facility only (the UI never surfaces other practitioners, Q13); viewed practitioner refs appended to the session's `surveiled_refs` (recorded in the report, §7.3).
+- **Deliver:** `get_facility` — `HISI Health Facility` detail (license, operational status, level; geofence internals never returned); `list_practitioners` — `HISI Professional Record` rows of the surveilled facility only (the UI never surfaces other practitioners, Q13), with **registry back-fill (2026-10-31)**: an empty local list consults the DHA practitioner register, registers the confirmed rows (`registered_by` = the mandate's company; `practitioner_registered` event), and a miss or unreachable register keeps the (empty) local list — 200, not an error; viewed practitioner refs appended to the session's `surveiled_refs` (recorded in the report, §7.3).
 - **Accept:** `facility_viewed` / `practitioner_viewed` events; a facility with no in-scope visits returns an empty practitioner list (200, not an error).
 - **Deps:** S3.1. **Size:** S.
 
@@ -127,7 +127,7 @@
 *Goal: the same flow the spec defines, as three screens — with zero trust in the browser (allow-listed ops, geolocation as a sensor only).*
 
 ### S4.1 Operations allow-list + contracts
-- **Deliver:** `surveillance.*` operations in `lib/server/operations.ts` (issue_mandate, verify_mandate, start_session, get_session, surveil_patient, get_facility, list_practitioners, recheck_location, end_session, list_sessions, get_session_audit, revoke_mandate) + zod schemas in `lib/operations-contract.ts` — **in the same change as each endpoint lands** (the allow-list drift lesson, 2026-10-23).
+- **Deliver:** `surveillance.*` operations in `lib/server/operations.ts` (issue_mandate, verify_mandate, start_session, get_session, surveil_patient, get_facility, list_practitioners, recheck_location, end_session, list_sessions, get_session_audit, revoke_mandate, list_mandates — S4.3, and the 2026-10-31 onboarding trio list_payer_members / onboard_officer / remove_officer — onboard auto-grants the officer role; list_payer_members returns per-company `active_members`) + zod schemas in `lib/operations-contract.ts` — **in the same change as each endpoint lands** (the allow-list drift lesson, 2026-10-23). 16 operations wired as of 2026-10-31; `search_facilities` is **not wired yet** — the dispatch console still posts the legacy `facility_detail` payload with a free-text facility field (the server ignores the extra parameter; the facility must be an exact registry match at issue). The registry picker + a `surveillance.search-facilities` proxy op are open (S4.3).
 - **Accept:** contract test: every operation maps to a live whitelisted method (no 404 drift); browser never calls Frappe directly (existing proxy invariant).
 - **Deps:** per-operation with Epics 1–3. **Size:** S (per op).
 
@@ -137,7 +137,7 @@
 - **Deps:** S4.1, S3.2. **Size:** L.
 
 ### S4.3 Dispatcher console
-- **Deliver:** issue-mandate form (facility picker, scope lines, officer picker, validity window, strict/flag policy, optional radius) with the generated **QR displayed for sharing**; mandate list with status; revoke action.
+- **Deliver:** issue-mandate form (facility picker, scope lines, officer picker, validity window, strict/flag policy, optional radius) with the generated **QR displayed for sharing**; mandate list with status; revoke action. Plus the officer onboarding journey (added 2026-10-31, its own Team nav section after Insight): the dispatcher manages the officer team at /dashboard/team - list members, onboard a new officer (account + surveillance role + membership; the emailed one-time code is the initial password), remove a member (account survives).
 - **Accept:** issued mandate's QR scans into the officer verify flow (manual e2e); cross-payer data never rendered (L2 scoping, client-side belt only).
 - **Deps:** S4.1, S1.1/S1.3. **Size:** M.
 
@@ -184,10 +184,10 @@
 | # | Item | Owner | Note |
 |---|---|---|---|
 | R1 | **Kenya DPA 2021 counsel confirmation** — exact statutory basis for the 6-year retention + audit duties (Q9) | User/Counsel | Retention setting ships at 2192 days regardless; counsel may adjust the number, not the architecture. |
-| R2 | **Local rebuild starts empty** — `HISI Health Facility` / `HISI Professional Record` accumulate rows as mandates are issued (surveilled targets only); where a pilot facility needs pre-existing detail (coordinates, licence data), a one-time import from the legacy systems is a per-site ops task | Dev/Data | S0.3 defines the schema; the S5.4 data-quality pass before go-live. |
+| R2 | **Local rebuild starts empty** — `HISI Health Facility` / `HISI Professional Record` accumulate rows as mandates are issued (surveilled targets only; **registry-confirmed since 2026-10-31** — facility rows are seeded from the DHA register at dispatch, practitioner rows via the `list_practitioners` back-fill, so register data quality *is* the seed quality); where a register row is stale (coordinates, licence data), the S5.4 pass corrects the local row | Dev/Data | S0.3 defines the schema; the S5.4 data-quality pass before go-live. |
 | R3 | **Browser geolocation spoofing gap** — accepted per Q5 (mobile web v1 + flagged review); native wrapper (isMock, selfie, attestation) is the v2 upgrade | User (v2 call) | v1 assurance = accuracy/freshness/consistency + flags + review, not detection. |
 | R4 | **Facility coordinate quality** — a missing/stale `HISI Health Facility` lat/lng makes the check-in misfire for that facility | Dev/Data | S5.4 data-quality pass on pilot facilities before go-live; radius default 1.0 km is generous for centroid coordinates. |
-| R5 | **Q10 unresolved** — epics assume the draft split: v1 = patient journey + facility + practitioners (claims = dispatch context / audit reference only); payments/preauths/IPS ride on the shelved Patient Journey spec. If the user pulls payments into v1, Epic 3 grows (payments endpoints + scope rules) before Epic 4. | User | Confirm before Epic 3 starts. |
+| R5 | **Q10 confirmed 2026-10-30** — draft v1 split confirmed: v1 = patient journey + facility + practitioners (claims = dispatch context / audit reference only); payments/preauths/IPS ride on the shelved Patient Journey spec. | User | Confirmed 2026-10-30; Epic 3 scope as written. |
 
 ---
 *Companion to `claims_surveillance_feature_spec.md`. Story IDs are stable references for the implementation tracker. The Patient Journey spec stays shelved until the user green-lights it; this surveillance feature is the enforcement layer that wraps it when it ships.*
