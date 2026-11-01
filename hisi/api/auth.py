@@ -214,14 +214,25 @@ def complete_password_reset(key: str, new_password: str) -> dict:
 	if not (key or "").strip() or not (new_password or "").strip():
 		frappe.throw("A reset key and a new password are required.", frappe.ValidationError)
 	from frappe.core.doctype.user.user import update_password
+	from frappe.utils.data import sha256_hash
 
+	# Resolve the user before the key is consumed (update_password clears it).
+	user = frappe.db.get_value(
+		"User", {"reset_password_key": sha256_hash((key or "").strip())}, "name"
+	)
 	result = update_password(new_password=new_password, key=(key or "").strip())
 	status = frappe.local.response.get("http_status_code")
 	if status and int(status) >= 400:
 		frappe.local.response["http_status_code"] = 410
 		frappe.local.response["message"] = str(result) or "The reset link is no longer valid."
 		return None
-	return {"reset": True, "redirect": result or "/sign-in"}
+	# A successful reset proves mailbox ownership (single-use, expiring key
+	# emailed to the account address), so sign the user in directly instead
+	# of forcing a second sign-in round-trip. Same login-time mandate as
+	# auth.login: no active organization, no session.
+	if user and has_organization(user):
+		frappe.local.login_manager.login_as(user)
+	return {"reset": True, "redirect": "/dashboard"}
 
 @frappe.whitelist(methods=["POST"])
 @api_endpoint
