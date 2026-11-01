@@ -56,6 +56,10 @@ jobs:
               "url": "https://x-access-token:${GIT_TOKEN}@github.com/tiberbu/hisi.git",
               "branch": "develop"
             }
+            {
+              "url": "https://github.com/frappe/erpnext",
+              "branch": "develop"
+            }
           ]
           EOF
 
