@@ -166,7 +166,14 @@ def verify_login_code(email: str = "", code: str = "") -> dict:
 		frappe.db.set_value("HISI Login Code", row.name, {"attempts": attempts, "status": "Revoked" if attempts >= MAX_ATTEMPTS else "Pending"})
 		frappe.db.commit()
 		reject()
+	# Atomic claim: lock the row, re-check its status under the lock, then
+	# mark Used. Two concurrent verifications of the same code serialize on
+	# the row lock; only the first still sees Pending and mints a session.
+	frappe.db.sql("SELECT name FROM `tabHISI Login Code` WHERE name = %s FOR UPDATE", (row.name,))
+	if frappe.db.get_value("HISI Login Code", row.name, "status") != "Pending":
+		reject()
 	frappe.db.set_value("HISI Login Code", row.name, "status", "Used")
+	frappe.db.commit()
 	frappe.local.login_manager.login_as(user)
 	# Same login-time mandate as auth.login: a user with no organization
 	# gets no usable session - the sign-in surface shows the block message.
