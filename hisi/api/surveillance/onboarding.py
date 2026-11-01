@@ -102,7 +102,6 @@ def _send_invite_email(email, first_name, company_name, code, sign_in_url, new_a
 			},
 			raw_html=True,
 			add_unsubscribe_link=0,
-			redact_message_after_send=True,
 		)
 	except Exception as exc:
 		frappe.log_error(message=str(exc) or repr(exc), title="Officer invite email failed")
