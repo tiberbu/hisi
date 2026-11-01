@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Provider onboarding · HISI</title>
+<style>
+  :root {
+    --green: #1a6b48;
+    --green-dark: #14543a;
+    --bg: #f4f7f5;
+    --card: #ffffff;
+    --border: #e5edea;
+    --ink: #111827;
+    --ink-2: #374151;
+    --ink-3: #6b7280;
+    --ok-bg: #f0f9f3;
+    --ok-border: #d7e5dd;
+    --warn-bg: #fdf6ec;
+    --warn-border: #f0e2c8;
+    --err-bg: #fdf2f2;
+    --err-border: #f3d5d5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 28px;
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand .mark { font-size: 19px; font-weight: 600; letter-spacing: 1px; color: var(--green); }
+  .brand .sub { font-size: 11px; font-weight: 500; letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-3); }
+  .userbox { display: flex; align-items: center; gap: 14px; font-size: 13.5px; color: var(--ink-2); }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 32px 20px 64px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 26px 28px;
+    margin-bottom: 20px;
+  }
+  .card.center { max-width: 440px; margin: 8vh auto 0; text-align: left; }
+  h1 { margin: 0 0 6px; font-size: 21px; font-weight: 600; }
+  h2 { margin: 0 0 4px; font-size: 16.5px; font-weight: 600; }
+  .muted { color: var(--ink-3); margin: 0 0 16px; }
+  .small { font-size: 13px; }
+  label { display: block; font-size: 13px; font-weight: 500; color: var(--ink-2); margin-bottom: 12px; }
+  input, select {
+    display: block;
+    width: 100%;
+    margin-top: 5px;
+    padding: 10px 12px;
+    font: inherit;
+    color: var(--ink);
+    background: #fbfdfc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  input:focus, select:focus { outline: 2px solid rgba(26, 107, 72, 0.35); border-color: var(--green); }
+  .btn {
+    display: inline-block;
+    padding: 11px 22px;
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: var(--green);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .btn:hover { background: var(--green-dark); }
+  .btn:disabled { opacity: 0.55; cursor: default; }
+  .linkbtn { background: none; border: none; padding: 0; font: inherit; font-size: 13.5px; color: var(--green); cursor: pointer; }
+  .linkbtn:hover { text-decoration: underline; }
+  .error { color: #b42318; background: var(--err-bg); border: 1px solid var(--err-border); border-radius: 10px; padding: 10px 14px; font-size: 13.5px; margin: 14px 0 0; }
+  .msg { font-size: 13.5px; border-radius: 10px; padding: 10px 14px; margin: 14px 0 0; }
+  .msg.ok { color: #14532d; background: var(--ok-bg); border: 1px solid var(--ok-border); }
+  .msg.err { color: #b42318; background: var(--err-bg); border: 1px solid var(--err-border); }
+  .grid { display: grid; grid-template-columns: 5fr 6fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .card-head h2 { margin: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  td { padding: 10px; border-bottom: 1px solid #f0f4f2; vertical-align: top; color: var(--ink-2); }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .badge.ready { color: #14532d; background: var(--ok-bg); border: 1px solid var(--ok-border); }
+  .badge.onboarding { color: #92400e; background: var(--warn-bg); border: 1px solid var(--warn-border); }
+  .badge.none { color: var(--ink-3); background: #f3f4f6; border: 1px solid #e5e7eb; }
+  .admin-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .foot { text-align: center; color: #9ca3af; font-size: 11.5px; padding: 8px 0 28px; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="mark">HISI</span><span class="sub">Provider onboarding</span></div>
+  <div class="userbox" id="userbox" hidden>
+    <span id="user-email"></span>
+    <button type="button" id="signout-btn" class="linkbtn">Sign out</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- Sign-in (guest) -->
+  <section class="card center" id="view-signin" hidden>
+    <h1>Sign in</h1>
+    <p class="muted">This console is for platform administrators. Use your HISI account — a one-time code is emailed after your password is verified.</p>
+    <form id="form-login">
+      <label>Email
+        <input id="login-email" type="email" autocomplete="username" required>
+      </label>
+      <label>Password
+        <input id="login-pwd" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="btn" type="submit" id="login-btn">Continue</button>
+    </form>
+    <form id="form-code" hidden>
+      <label>One-time code
+        <input id="login-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="6-digit code" required>
+      </label>
+      <p class="muted small" style="margin-bottom:12px;">Enter the 6-digit code sent to <strong id="code-email"></strong>.</p>
+      <button class="btn" type="submit" id="code-btn">Verify and sign in</button>
+    </form>
+    <p class="error" id="signin-error" hidden></p>
+  </section>
+
+  <!-- Logged in, not a platform role -->
+  <section class="card center" id="view-forbidden" hidden>
+    <h1>Restricted area</h1>
+    <p class="muted" style="margin-bottom:0;">This console is limited to platform administrators (System Manager or HISI Reviewer). Sign out and use your organization's Team page to manage your own members.</p>
+  </section>
+
+  <!-- Console (platform operator) -->
+  <section id="view-console" hidden>
+    <div class="grid">
+      <div>
+        <section class="card">
+          <h2>Onboard a provider company</h2>
+          <p class="muted small">Adds the organization to the book of business (Kenya defaults). Existing companies can be used as-is below.</p>
+          <form id="form-company">
+            <label>Company name
+              <input id="company-name" minlength="2" maxlength="120" placeholder="e.g. Acacia Assurance" required>
+            </label>
+            <button class="btn" type="submit" id="company-btn">Create company</button>
+          </form>
+          <p class="msg" id="company-msg" hidden></p>
+        </section>
+
+        <section class="card">
+          <h2>Create an onboarding account</h2>
+          <p class="muted small">The organization's admin. They get a one-time code email; once signed in with it, they can invite their own members from the Team page on the surveillance platform.</p>
+          <form id="form-admin">
+            <label>Company
+              <select id="admin-company" required></select>
+            </label>
+            <label>Email
+              <input id="admin-email" type="email" placeholder="admin@provider.co.ke" required>
+            </label>
+            <label>Full name
+              <input id="admin-name" maxlength="140" placeholder="Optional — derived from the email if blank">
+            </label>
+            <button class="btn" type="submit" id="admin-btn">Send onboarding email</button>
+          </form>
+          <p class="msg" id="admin-msg" hidden></p>
+        </section>
+      </div>
+
+      <div>
+        <section class="card">
+          <div class="card-head">
+            <h2>Provider companies</h2>
+            <button type="button" id="refresh-btn" class="linkbtn">Refresh</button>
+          </div>
+          <table aria-label="Provider companies">
+            <thead>
+              <tr><th>Company</th><th>Members</th><th>Admin</th><th>Pending</th><th>Status</th></tr>
+            </thead>
+            <tbody id="companies-body"></tbody>
+          </table>
+          <p class="msg" id="companies-msg" hidden></p>
+        </section>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="foot">HISI · Health Information System Interoperability</div>
+
+<script>
+(function () {
+  var CSRF = "{{ csrf_token }}";
+  var LOGGED_USER = {{ logged_user or 'null' | safe }};
+  var IS_PLATFORM = {{ 'true' if platform else 'false' }};
+
+  function $(id) { return document.getElementById(id); }
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function api(method, path, body) {
+    var opts = { method: method, headers: {}, credentials: 'same-origin' };
+    if (method !== 'GET') {
+      opts.headers['Content-Type'] = 'application/json';
+      if (CSRF) opts.headers['X-Frappe-CSRF-Token'] = CSRF;
+      opts.body = JSON.stringify(body || {});
+    }
+    return fetch('/api/method/' + path, opts).then(function (response) {
+      return response.text().then(function (text) {
+        var parsed = null;
+        try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+        if (!parsed) {
+          var err = new Error('Unexpected response from the server.');
+          err.fatal = true;
+          throw err;
+        }
+        if (parsed.status === 'error') throw new Error(parsed.message || 'Request failed.');
+        return parsed;
+      });
+    });
+  }
+
+  function show(viewId) {
+    ['view-signin', 'view-forbidden', 'view-console'].forEach(function (id) {
+      $(id).hidden = id !== viewId;
+    });
+  }
+
+  function setMsg(id, text, kind) {
+    var el = $(id);
+    el.textContent = text;
+    el.className = 'msg ' + (kind === 'err' ? 'err' : 'ok');
+    el.hidden = !text;
+  }
+
+  function setBusy(btn, busy) {
+    btn.disabled = busy;
+  }
+
+  /* ---- sign-in (same MFA flow as the platform) ------------------------- */
+
+  function showSignInError(message) {
+    var el = $('signin-error');
+    el.textContent = message;
+    el.hidden = false;
+  }
+
+  $('form-login').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var email = $('login-email').value.trim();
+    var pwd = $('login-pwd').value;
+    setBusy($('login-btn'), true);
+    $('signin-error').hidden = true;
+    api('POST', 'hisi.api.auth.login', { usr: email, pwd: pwd }).then(function (res) {
+      if (res.status === 'code_required') {
+        $('code-email').textContent = email;
+        $('form-login').hidden = true;
+        $('form-code').hidden = false;
+        $('login-code').focus();
+      } else if (res.status === 'no_organization') {
+        showSignInError(res.message || 'This account is not linked to an organization.');
+      } else if (res.status === 'password_expired') {
+        showSignInError(res.message || 'Your password has expired. A reset link was emailed to you.');
+      } else if (res.user || res.status === 'success') {
+        window.location.reload();
+      } else {
+        showSignInError('Sign-in failed. Check your email and password, then try again.');
+      }
+    }).catch(function (err) {
+      showSignInError(err.fatal ? err.message : 'Sign-in failed. Check your email and password, then try again.');
+    }).then(function () {
+      setBusy($('login-btn'), false);
+    });
+  });
+
+  $('form-code').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var email = $('login-email').value.trim();
+    var code = $('login-code').value.trim();
+    setBusy($('code-btn'), true);
+    $('signin-error').hidden = true;
+    api('POST', 'hisi.api.auth.verify_login_code', { email: email, code: code }).then(function (res) {
+      if (res.user || res.status === 'success') {
+        window.location.reload();
+        return;
+      }
+      if (res.status === 'no_organization') {
+        showSignInError(res.message || 'This account is not linked to an organization.');
+        return;
+      }
+      showSignInError('That code could not be verified. Check the latest email and try again.');
+    }).catch(function (err) {
+      showSignInError(err.fatal ? err.message : 'That code could not be verified. Check the latest email and try again.');
+    }).then(function () {
+      setBusy($('code-btn'), false);
+    });
+  });
+
+  /* ---- console ---------------------------------------------------------- */
+
+  function renderCompanies(rows) {
+    var body = $('companies-body');
+    body.innerHTML = '';
+    rows.forEach(function (row) {
+      var tr = document.createElement('tr');
+      var admins = row.admins || [];
+      var adminText = admins.length
+        ? admins[0] + (admins.length > 1 ? ' +' + (admins.length - 1) : '')
+        : (row.pending_admins && row.pending_admins.length ? row.pending_admins[0] + ' (invited)' : '—');
+      var status = row.admin_ready
+        ? '<span class="badge ready">Ready</span>'
+        : (row.pending_admins && row.pending_admins.length
+          ? '<span class="badge onboarding">Onboarding</span>'
+          : '<span class="badge none">No admin yet</span>');
+      tr.innerHTML =
+        '<td><strong>' + esc(row.company_name) + '</strong><br><span class="small" style="color:var(--ink-3)">' + esc(row.company) + '</span></td>' +
+        '<td class="num">' + esc(row.active_members) + '</td>' +
+        '<td class="admin-cell" title="' + esc(adminText) + '">' + esc(adminText) + '</td>' +
+        '<td class="num">' + esc(row.pending_invites) + '</td>' +
+        '<td>' + status + '</td>';
+      body.appendChild(tr);
+    });
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="5" style="color:var(--ink-3)">No companies yet — create the first one on the left.</td></tr>';
+    }
+  }
+
+  function populateSelect(rows) {
+    var select = $('admin-company');
+    select.innerHTML = '';
+    rows.forEach(function (row) {
+      var option = document.createElement('option');
+      option.value = row.company;
+      option.textContent = row.company_name + (row.admin_ready ? '' : ' — no admin yet');
+      select.appendChild(option);
+    });
+  }
+
+  function loadCompanies() {
+    setMsg('companies-msg', 'Loading…', 'ok');
+    api('GET', 'hisi.api.provider_onboarding.list_provider_companies').then(function (res) {
+      var rows = (res.data && res.data.companies) || [];
+      renderCompanies(rows);
+      populateSelect(rows);
+      setMsg('companies-msg', '');
+    }).catch(function (err) {
+      setMsg('companies-msg', err.message, 'err');
+    });
+  }
+
+  $('form-company').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var name = $('company-name').value.trim();
+    setBusy($('company-btn'), true);
+    setMsg('company-msg', 'Creating…', 'ok');
+    api('POST', 'hisi.api.provider_onboarding.create_provider_company', { company_name: name }).then(function () {
+      $('company-name').value = '';
+      setMsg('company-msg', 'Company “' + name + '” created.', 'ok');
+      loadCompanies();
+    }).catch(function (err) {
+      setMsg('company-msg', err.message, 'err');
+    }).then(function () {
+      setBusy($('company-btn'), false);
+    });
+  });
+
+  $('form-admin').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var company = $('admin-company').value;
+    var email = $('admin-email').value.trim();
+    var fullName = $('admin-name').value.trim();
+    setBusy($('admin-btn'), true);
+    setMsg('admin-msg', 'Sending…', 'ok');
+    api('POST', 'hisi.api.provider_onboarding.onboard_provider_admin', {
+      company: company,
+      email: email,
+      full_name: fullName || null
+    }).then(function () {
+      $('admin-email').value = '';
+      $('admin-name').value = '';
+      setMsg('admin-msg', 'Onboarding email sent to ' + email + '. They sign in with the emailed one-time code.', 'ok');
+      loadCompanies();
+    }).catch(function (err) {
+      setMsg('admin-msg', err.message, 'err');
+    }).then(function () {
+      setBusy($('admin-btn'), false);
+    });
+  });
+
+  $('refresh-btn').addEventListener('click', loadCompanies);
+
+  $('signout-btn').addEventListener('click', function () {
+    api('POST', 'logout').then(function () {
+      window.location.reload();
+    }).catch(function () {
+      window.location.reload();
+    });
+  });
+
+  /* ---- boot ------------------------------------------------------------- */
+
+  if (LOGGED_USER && IS_PLATFORM) {
+    show('view-console');
+    $('userbox').hidden = false;
+    $('user-email').textContent = LOGGED_USER;
+    loadCompanies();
+  } else if (LOGGED_USER) {
+    show('view-forbidden');
+  } else {
+    show('view-signin');
+  }
+})();
+</script>
+</body>
+</html>

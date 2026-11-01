@@ -46,7 +46,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Event Type",
-   "options": "mandate_issued\nmandate_verified\nmandate_verify_failed\nmandate_verify_locked\nmandate_revoked\ncheckin_verified\ncheckin_failed\nsession_started\nsession_expired\nsession_ended\nsession_recheck\npatient_viewed\neligibility_viewed\nconsent_viewed\nrecords_viewed\nfacility_viewed\npractitioner_viewed\nscope_denied\nauth_denied\nerror\nmandate_listed\nsessions_listed\naudit_viewed\nsession_revoked\nofficer_onboarded\nofficer_removed\nmembers_listed\ninvite_confirmed\nofficer_invite_resent\nofficer_updated\nfacilities_searched\npractitioner_registered\nevidence_uploaded\nevidence_downloaded\nevidence_rejected\nfindings_recorded\nmandate_accepted\nmandate_accept_failed\ninvite_code_rejected\nsession_paused\nsession_resumed",
+   "options": "mandate_issued\nmandate_verified\nmandate_verify_failed\nmandate_verify_locked\nmandate_revoked\ncheckin_verified\ncheckin_failed\nsession_started\nsession_expired\nsession_ended\nsession_recheck\npatient_viewed\neligibility_viewed\nconsent_viewed\nrecords_viewed\nfacility_viewed\npractitioner_viewed\nscope_denied\nauth_denied\nerror\nmandate_listed\nsessions_listed\naudit_viewed\nsession_revoked\nofficer_onboarded\nofficer_removed\nmembers_listed\ninvite_confirmed\nofficer_invite_resent\nofficer_updated\nfacilities_searched\npractitioner_registered\nevidence_uploaded\nevidence_downloaded\nevidence_rejected\nfindings_recorded\nmandate_accepted\nmandate_accept_failed\ninvite_code_rejected\nsession_paused\nsession_resumed\nprovider_companies_listed\nprovider_company_created\nprovider_admin_onboarded\nprovider_console_denied",
    "reqd": 1
   },
   {
@@ -54,7 +54,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Target Type",
-   "options": "patient\nclaim\nvisit\nfacility\npractitioner\nrecord\nmandate\nsession\nuser"
+   "options": "patient\nclaim\nvisit\nfacility\npractitioner\nrecord\nmandate\nsession\nuser\ncompany"
   },
   {
    "description": "Masked identifier for list views (e.g. CR247…58) — full identifiers never stored here.",

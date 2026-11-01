@@ -119,6 +119,49 @@ def fhir_bundle():
 
 
 class SurveillanceTestCase(IntegrationTestCase):
+	# Fixture names shared across the suite; the setUp self-heal clears any
+	# committed residue under these names so a leaked commit can never poison
+	# the next run again.
+	COMPANIES = ("Acme Assurance", "Beta Assurance", "Acacia Assurance", "Gamma Assurance")
+	FACILITIES = ("Nairobi East Clinic", "Mombasa Coast Hospital")
+
+	def _purge_fixture_residue(self):
+		"""Delete committed fixture rows leaked by an earlier run.
+
+		Any real commit() in the stack (a missed patch, an interrupted run) releases
+		this class's savepoint and persists fixtures; the next setUp then dies on
+		DuplicateEntryError. Runs inside the savepoint, so these deletes roll back
+		in tearDown like everything else.
+		"""
+		users = frappe.get_all("User", {"email": ["like", "%acme.example"]}, pluck="name")
+		users += frappe.get_all("User", {"email": ["like", "%beta.example"]}, pluck="name")
+		for dt in ("HISI Surveillance Event", "HISI Surveillance Mandate", "HISI Surveillance Session"):
+			frappe.db.delete(dt, {"company": ["in", self.COMPANIES]})
+		frappe.db.delete("HISI Officer Invite", {"company": ["in", self.COMPANIES]})
+		frappe.db.delete("HISI Professional Record", {"facility": ["in", self.FACILITIES]})
+		if users:
+			frappe.db.delete("Employee", {"user_id": ["in", users]})
+			frappe.db.delete("Has Role", {"parent": ["in", users]})
+			frappe.db.delete("Notification Settings", {"user": ["in", users]})
+			frappe.db.delete("Sessions", {"user": ["in", users]})
+			for user in users:
+				try:
+					frappe.delete_doc("User", user, force=True)
+				except Exception:  # noqa: BLE001 - cleanup must never break setUp
+					pass
+		for company in self.COMPANIES:
+			if frappe.db.exists("Company", company):
+				try:
+					frappe.delete_doc("Company", company, force=True)
+				except Exception:  # noqa: BLE001
+					pass
+		for facility in self.FACILITIES:
+			if frappe.db.exists("HISI Health Facility", facility):
+				try:
+					frappe.delete_doc("HISI Health Facility", facility, force=True)
+				except Exception:  # noqa: BLE001
+					pass
+
 	def set_settings(self, **values):
 		doc = frappe.get_doc("HISI Settings")
 		for key, value in values.items():
@@ -219,8 +262,9 @@ class SurveillanceTestCase(IntegrationTestCase):
 	def setUp(self):
 		super().setUp()
 		# Neutralise commits for the duration of the test: frappe-core paths
-		# (EmailQueue.send, auth.update_profile) call frappe.db.commit(), which
-		# releases this class's savepoint and leaks fixtures into the next test
+		# (EmailQueue.send, auth.update_profile, sessions.delete_session) call
+		# frappe.db.commit() - some with keyword args (commit(chain=True)) -
+		# which releases this class's savepoint and leaks fixtures into the next test
 		# (a single poisoned row then cascades into DuplicateEntryError across
 		# the whole suite). No-op'ing commit keeps the savepoint intact so the
 		# tearDown rollback restores a clean slate for every subclass.
@@ -228,9 +272,10 @@ class SurveillanceTestCase(IntegrationTestCase):
 		# class (located via the real instance's MRO), not on the proxy type.
 		_db_cls = type(frappe.local.db)
 		_commit_owner = next(c for c in _db_cls.__mro__ if "commit" in vars(c))
-		self._commit_patcher = patch.object(_commit_owner, "commit", lambda self: None)
+		self._commit_patcher = patch.object(_commit_owner, "commit", lambda self, *args, **kwargs: None)
 		self._commit_patcher.start()
 		frappe.db.savepoint("surveillance_test")
+		self._purge_fixture_residue()
 		self.set_settings(
 			surveillance_session_ttl_minutes=240,
 			surveillance_idle_timeout_minutes=30,

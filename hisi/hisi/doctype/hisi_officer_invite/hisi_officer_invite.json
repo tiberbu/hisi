@@ -8,6 +8,7 @@
  "field_order": [
   "email",
   "company",
+  "role",
   "code",
   "status",
   "account_created",
@@ -31,6 +32,14 @@
    "label": "Company",
    "options": "Company",
    "reqd": 1
+  },
+  {
+   "default": "HISI Insurance Surveillance",
+   "fieldname": "role",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Role",
+   "options": "HISI Insurance Surveillance\nHISI Insurance Provider"
   },
   {
    "fieldname": "code",

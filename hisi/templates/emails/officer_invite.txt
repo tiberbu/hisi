@@ -1,12 +1,18 @@
 Hello {{ first_name }},
 
-{% if new_account %}Your account at {{ company }} on HISI is ready.
+{% if role == 'HISI Insurance Provider' %}{% if new_account %}Your account at {{ company }} on HISI is ready.
+
+You are set up as the organization's administrator. To get started, enter the one-time code below on the sign-in page and choose a password — you will be signed in as soon as it is saved. From the Team page you can then invite your members to the surveillance platform.
+{% else %}You have been added to {{ company }} on HISI as an administrator.
+
+Enter the one-time code below to confirm the invitation. You will be signed in straight away, and can invite your members to the surveillance platform from the Team page.
+{% endif %}{% else %}{% if new_account %}Your account at {{ company }} on HISI is ready.
 
 You are set up as a surveillance officer. To get started, enter the one-time code below on the sign-in page and choose a password — you will be signed in as soon as it is saved.
 {% else %}You have been added to {{ company }} on HISI as a surveillance officer.
 
 Enter the one-time code below to confirm the invitation. You will be signed in straight away, with the new organization ready to use.
-{% endif %}
+{% endif %}{% endif %}
 
 Your one-time code:
 

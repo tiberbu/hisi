@@ -19,12 +19,22 @@
   <tr>
     <td style="padding:36px 44px 8px;font-family:'IBM Plex Sans','Helvetica Neue',Arial,sans-serif;font-size:15px;line-height:1.65;color:#374151;">
       <p style="margin:0 0 16px;font-size:18px;font-weight:600;color:#111827;">Hello {{ first_name }},</p>
+      {% if role == 'HISI Insurance Provider' %}
+      {% if new_account %}
+      <p style="margin:0 0 12px;">Your account at <strong style="color:#1a6b48;">{{ company }}</strong> on HISI is ready.</p>
+      <p style="margin:0;">You are set up as the organization's administrator. To get started, enter the one-time code below on the sign-in page and choose a password — you will be signed in as soon as it is saved. From the Team page you can then invite your members to the surveillance platform.</p>
+      {% else %}
+      <p style="margin:0 0 12px;">You have been added to <strong style="color:#1a6b48;">{{ company }}</strong> on HISI as an administrator.</p>
+      <p style="margin:0;">Enter the one-time code below to confirm the invitation. You will be signed in straight away, and can invite your members to the surveillance platform from the Team page.</p>
+      {% endif %}
+      {% else %}
       {% if new_account %}
       <p style="margin:0 0 12px;">Your account at <strong style="color:#1a6b48;">{{ company }}</strong> on HISI is ready.</p>
       <p style="margin:0;">You are set up as a surveillance officer. To get started, enter the one-time code below on the sign-in page and choose a password — you will be signed in as soon as it is saved.</p>
       {% else %}
       <p style="margin:0 0 12px;">You have been added to <strong style="color:#1a6b48;">{{ company }}</strong> on HISI as a surveillance officer.</p>
       <p style="margin:0;">Enter the one-time code below to confirm the invitation. You will be signed in straight away, with the new organization ready to use.</p>
+      {% endif %}
       {% endif %}
     </td>
   </tr>
