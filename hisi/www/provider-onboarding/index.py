@@ -22,5 +22,5 @@ def get_context(context):
 		context.logged_user = user
 		context.roles = frappe.get_roles(user)
 		context.platform = bool(set(context.roles) & {"Administrator", "System Manager", "HISI Reviewer"})
-		context.csrf_token = frappe.get_csrf_token()
+		context.csrf_token = frappe.sessions.get_csrf_token()
 	context.title = "Provider onboarding"

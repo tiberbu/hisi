@@ -219,7 +219,7 @@
 <script>
 (function () {
   var CSRF = "{{ csrf_token }}";
-  var LOGGED_USER = {{ logged_user or 'null' | safe }};
+  var LOGGED_USER = {{ logged_user | tojson }};
   var IS_PLATFORM = {{ 'true' if platform else 'false' }};
 
   function $(id) { return document.getElementById(id); }
