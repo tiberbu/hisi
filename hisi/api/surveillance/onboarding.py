@@ -65,7 +65,7 @@ def _revoke_pending_invites(email, company):
 		frappe.db.set_value("HISI Officer Invite", row.name, "status", "Revoked")
 
 
-def _create_invite(email, company, invited_by, account_created):
+def _create_invite(email, company, invited_by, account_created, role=OFFICER_DESIGNATION):
 	code = "%06d" % secrets.randbelow(1000000)
 	expires = (now_datetime() + INVITE_TTL).strftime("%Y-%m-%d %H:%M:%S")
 	doc = frappe.get_doc(
@@ -73,6 +73,7 @@ def _create_invite(email, company, invited_by, account_created):
 			"doctype": "HISI Officer Invite",
 			"email": email,
 			"company": company,
+			"role": role or OFFICER_DESIGNATION,
 			"code": code,
 			"status": "Pending",
 			"account_created": 1 if account_created else 0,
@@ -84,10 +85,11 @@ def _create_invite(email, company, invited_by, account_created):
 	return doc
 
 
-def _send_invite_email(email, first_name, company_name, code, sign_in_url, new_account):
+def _send_invite_email(email, first_name, company_name, code, sign_in_url, new_account, role=OFFICER_DESIGNATION):
 	"""Styled invite email (complete HTML, no standard footer). New accounts
 	exchange the code for a first password; existing accounts confirm the
-	company link and are signed in."""
+	company link and are signed in. The role drives the wording (officer vs
+	organization admin)."""
 	try:
 		frappe.sendmail(
 			recipients=[email],
@@ -99,6 +101,7 @@ def _send_invite_email(email, first_name, company_name, code, sign_in_url, new_a
 				"code": code,
 				"sign_in_url": sign_in_url,
 				"new_account": 1 if new_account else 0,
+				"role": role or OFFICER_DESIGNATION,
 			},
 			raw_html=True,
 			add_unsubscribe_link=0,
@@ -288,7 +291,7 @@ def verify_invite_code(email: str = "", code: str = ""):
 	rows = frappe.get_all(
 		"HISI Officer Invite",
 		filters={"email": email, "status": "Pending", "code": code, "expires_at": [">", now_datetime()]},
-		fields=["name", "company", "account_created"],
+		fields=["name", "company", "account_created", "role"],
 		order_by="creation desc",
 		limit=1,
 	)
@@ -299,9 +302,12 @@ def verify_invite_code(email: str = "", code: str = ""):
 		"HISI Officer Invite", invite.name, {"status": "Confirmed", "confirmed_at": now_datetime().strftime("%Y-%m-%d %H:%M:%S")}
 	)
 	# Confirmation is what links the user to the company (pending until now).
-	upsert_org_employee(email, invite.company, designation=OFFICER_DESIGNATION)
-	grant_role(email, OFFICER_DESIGNATION)
-	log_event(None, user, "invite_confirmed", "user", email, {"company": invite.company, "account_created": bool(invite.account_created)}, "ok", duration_ms=duration_ms(start))
+	# The invite carries the role being granted - officer by default, the
+	# organization admin role for provider onboarding invites.
+	role = invite.role or OFFICER_DESIGNATION
+	upsert_org_employee(email, invite.company, designation=role)
+	grant_role(email, role)
+	log_event(None, user, "invite_confirmed", "user", email, {"company": invite.company, "account_created": bool(invite.account_created), "role": role}, "ok", duration_ms=duration_ms(start))
 	if invite.account_created:
 		link = frappe.get_doc("User", user)._reset_password(send_email=False)
 		key = parse_qs(urlparse(link).query).get("key", [""])[0]

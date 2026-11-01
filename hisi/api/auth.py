@@ -45,14 +45,21 @@ def app_origin() -> str:
 	return origin
 
 def link_for_app(link: str) -> str:
+	"""Anchor ``link`` on the app origin.
+
+	Relative paths (``/sign-in``) are anchored directly; absolute URLs
+	(e.g. password-reset links built on the API origin) are rebased onto
+	the app origin so emails never point at the backend host."""
 	origin = app_origin()
 	if not origin:
 		return link
 	parsed = urlparse(link)
-	if parsed.scheme not in ("http", "https") or not parsed.hostname:
-		return link
-	path = parsed.path or "/"
-	return origin + path + (("?" + parsed.query) if parsed.query else "")
+	if parsed.scheme in ("http", "https") and parsed.hostname:
+		path = parsed.path or "/"
+		return origin + path + (("?" + parsed.query) if parsed.query else "")
+	if not link.startswith("/"):
+		link = "/" + link
+	return origin + link
 
 @frappe.whitelist(allow_guest=True)
 def list_social_logins(redirect_to: str = "") -> dict:
