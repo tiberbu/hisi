@@ -46,7 +46,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Event Type",
-   "options": "mandate_issued\nmandate_verified\nmandate_verify_failed\nmandate_verify_locked\nmandate_revoked\ncheckin_verified\ncheckin_failed\nsession_started\nsession_expired\nsession_ended\nsession_recheck\npatient_viewed\neligibility_viewed\nconsent_viewed\nrecords_viewed\nfacility_viewed\npractitioner_viewed\nscope_denied\nauth_denied\nerror\nmandate_listed\nsessions_listed\naudit_viewed\nsession_revoked\nofficer_onboarded\nofficer_removed\nmembers_listed\ninvite_confirmed\nofficer_invite_resent\nofficer_updated\nfacilities_searched\npractitioner_registered",
+   "options": "mandate_issued\nmandate_verified\nmandate_verify_failed\nmandate_verify_locked\nmandate_revoked\ncheckin_verified\ncheckin_failed\nsession_started\nsession_expired\nsession_ended\nsession_recheck\npatient_viewed\neligibility_viewed\nconsent_viewed\nrecords_viewed\nfacility_viewed\npractitioner_viewed\nscope_denied\nauth_denied\nerror\nmandate_listed\nsessions_listed\naudit_viewed\nsession_revoked\nofficer_onboarded\nofficer_removed\nmembers_listed\ninvite_confirmed\nofficer_invite_resent\nofficer_updated\nfacilities_searched\npractitioner_registered\nevidence_uploaded\nevidence_downloaded\nevidence_rejected\nfindings_recorded\nmandate_accepted\nmandate_accept_failed\ninvite_code_rejected\nsession_paused\nsession_resumed",
    "reqd": 1
   },
   {

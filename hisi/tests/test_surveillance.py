@@ -218,6 +218,18 @@ class SurveillanceTestCase(IntegrationTestCase):
 
 	def setUp(self):
 		super().setUp()
+		# Neutralise commits for the duration of the test: frappe-core paths
+		# (EmailQueue.send, auth.update_profile) call frappe.db.commit(), which
+		# releases this class's savepoint and leaks fixtures into the next test
+		# (a single poisoned row then cascades into DuplicateEntryError across
+		# the whole suite). No-op'ing commit keeps the savepoint intact so the
+		# tearDown rollback restores a clean slate for every subclass.
+		# frappe.db is a thread-local proxy, so patch commit on the concrete DB
+		# class (located via the real instance's MRO), not on the proxy type.
+		_db_cls = type(frappe.local.db)
+		_commit_owner = next(c for c in _db_cls.__mro__ if "commit" in vars(c))
+		self._commit_patcher = patch.object(_commit_owner, "commit", lambda self: None)
+		self._commit_patcher.start()
 		frappe.db.savepoint("surveillance_test")
 		self.set_settings(
 			surveillance_session_ttl_minutes=240,
@@ -246,6 +258,11 @@ class SurveillanceTestCase(IntegrationTestCase):
 
 	def tearDown(self):
 		frappe.db.rollback(save_point="surveillance_test")
+		# Test bodies call frappe.set_user(); the rollback removes those users,
+		# so restore a neutral session or the next setUp's user insert fails
+		# link validation (Notification Settings defaults user to __user).
+		frappe.set_user("Administrator")
+		self._commit_patcher.stop()
 		super().tearDown()
 
 	def issue_mandate(self, **overrides):

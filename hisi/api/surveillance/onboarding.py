@@ -165,19 +165,23 @@ def list_payer_members():
 				"status": "active",
 			}
 		)
-	# Pending invitations: sent but not yet confirmed by the invitee, so no
-	# active membership yet. One row per unexpired invite, unless the user is
-	# already an active member of that company.
+	# Unconfirmed invitations: one row per invite, unless the user is already
+	# an active member of that company. Expired invites stay visible (marked
+	# "expired") so the dispatcher can resend a fresh one-time code.
 	active_pairs = {(row["user"], row["parent"]) for row in rows}
+	now = now_datetime()
+	seen_invites = set()
 	for inv in frappe.get_all(
 		"HISI Officer Invite",
-		filters={"company": ["in", orgs or [""]], "status": "Pending", "expires_at": [">", now_datetime()]},
-		fields=["name", "email", "company", "creation"],
+		filters={"company": ["in", orgs or [""]], "status": "Pending"},
+		fields=["name", "email", "company", "creation", "expires_at"],
 		order_by="creation desc",
 	):
-		if (inv.email, inv.company) in active_pairs:
+		if (inv.email, inv.company) in active_pairs or (inv.email, inv.company) in seen_invites:
 			continue
+		seen_invites.add((inv.email, inv.company))
 		full_name = frappe.db.get_value("User", inv.email, "full_name")
+		expired = inv.expires_at and now > frappe.utils.get_datetime(inv.expires_at)
 		members.append(
 			{
 				"user": inv.email,
@@ -187,7 +191,7 @@ def list_payer_members():
 				"company": inv.company,
 				"added_on": str(inv.creation) if inv.creation else None,
 				"id": inv.name,
-				"status": "pending",
+				"status": "expired" if expired else "pending",
 			}
 		)
 	log_event(None, user, "members_listed", "user", None, details={"scope": scope_kind, "total": len(members)}, outcome="ok", duration_ms=duration_ms(start))
