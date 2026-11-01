@@ -94,6 +94,12 @@ def get_my_profile() -> dict:
 	user = frappe.session.user
 	if user == "Guest":
 		frappe.throw("Not authorized", frappe.PermissionError)
+	# Session-level mandate: a signed-in user without an active
+	# organization (company + Employee) loses access. The session is
+	# killed server-side and the front-end treats the 403 as signed-out.
+	if not has_organization(user):
+		frappe.local.login_manager.logout()
+		frappe.throw("No active organization", frappe.PermissionError)
 	user_row = (
 		frappe.db.get_value("User", user, ["full_name", "email"], as_dict=True)
 		or frappe._dict()
@@ -147,7 +153,8 @@ def login(usr: str = "", pwd: str = "", otp: str = "", tmp_id: str = "") -> dict
 
 	# Login-time organization mandate: a user that is not tied to any
 	# organization (no active Employee on any Company) gets no usable
-	# session - the sign-in surface shows the block message instead.
+	# session - the sign-in surface shows the block message instead. No
+	# code email is sent for an account that cannot be granted access.
 	user = frappe.local.login_manager.user
 	if not has_organization(user):
 		frappe.local.login_manager.logout()
@@ -155,7 +162,19 @@ def login(usr: str = "", pwd: str = "", otp: str = "", tmp_id: str = "") -> dict
 			"status": "no_organization",
 			"message": "This account is not linked to an organization. Ask your organization administrator to add you, then sign in again.",
 		}
-	return {"user": user, "message": "Logged In"}
+	# Mandatory MFA: a verified password never completes a sign-in on its
+	# own. A one-time code is emailed to the account address and the
+	# half-session is discarded; the session is created only when the code
+	# is presented (auth.verify-login-code).
+	from hisi.api.login_code import issue_login_code
+
+	issued = issue_login_code(user)
+	frappe.local.login_manager.logout()
+	return {
+		"status": "code_required",
+		"sent": issued["sent"],
+		"expires_in": issued["expires_in"],
+	}
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=get_password_reset_limit, seconds=60 * 60)

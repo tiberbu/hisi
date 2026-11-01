@@ -1,11 +1,12 @@
-"""Email one-time-code sign-in for existing accounts.
+"""Email one-time-code verification for sign-in.
 
-Every sign-in can be completed with a 6-digit code emailed to the account
-address instead of a password. Codes are single-use, expire after ten
-minutes, tolerate five wrong guesses, and are stored only as a SHA-256
-hash. Issuance and verification are both guest-reachable, rate-limited,
-and answer with identical shapes regardless of whether the account
-exists, so the surface never leaks account existence."""
+Every sign-in is completed with a 6-digit code emailed to the account
+address: the password proves the account, the code proves the mailbox.
+Codes are single-use, expire after ten minutes, tolerate five wrong
+guesses, and are stored only as a SHA-256 hash. Issuance and
+verification are both guest-reachable, rate-limited, and answer with
+identical shapes regardless of whether the account exists, so the
+surface never leaks account existence."""
 
 import hashlib
 import re
@@ -67,7 +68,7 @@ def _send_code_email(email, first_name, code, resend):
 				"first_name": first_name,
 				"code": code,
 				"expires_minutes": int(CODE_TTL.total_seconds() // 60),
-				"sign_in_url": link_for_app("/sign-in?code=1"),
+				"sign_in_url": link_for_app("/sign-in"),
 				"resend": 1 if resend else 0,
 			},
 			raw_html=True,
@@ -82,10 +83,33 @@ def _revoke_pending(user):
 		frappe.db.set_value("HISI Login Code", row.name, "status", "Revoked")
 
 
+def issue_login_code(user: str, resend: bool = False) -> dict:
+	"""Insert a fresh Pending code for ``user`` and email it.
+
+	Used by the password step of sign-in (the code is the mandatory MFA
+	factor) and by the guest resend path. Cancelling an unspent code is
+	the caller's job (see ``_revoke_pending``)."""
+	code = "%06d" % secrets.randbelow(1000000)
+	doc = frappe.get_doc(
+		{
+			"doctype": "HISI Login Code",
+			"user": user,
+			"code_hash": _code_hash(code),
+			"status": "Pending",
+			"attempts": 0,
+			"expires_at": (now_datetime() + CODE_TTL).strftime("%Y-%m-%d %H:%M:%S"),
+			"ip": _client_ip(),
+		}
+	)
+	doc.insert(ignore_permissions=True)
+	_send_code_email(user, _display_name(user), code, resend)
+	return {"sent": True, "expires_in": int(CODE_TTL.total_seconds())}
+
+
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 @rate_limit(limit=5, seconds=300)
 def request_login_code(email: str = "") -> dict:
-	"""Issue a one-time sign-in code for an existing account.
+	"""Issue (or re-issue) a one-time sign-in code for an existing account.
 
 	The response is identical whether or not the account exists (no
 	enumeration). A fresh request cancels any unspent code for that user;
@@ -100,21 +124,7 @@ def request_login_code(email: str = "") -> dict:
 		return {"sent": True, "expires_in": int(CODE_TTL.total_seconds())}
 	resend = bool(frappe.get_all("HISI Login Code", filters={"user": user, "status": "Pending"}, fields=["name"], limit=1))
 	_revoke_pending(user)
-	code = "%06d" % secrets.randbelow(1000000)
-	doc = frappe.get_doc(
-		{
-			"doctype": "HISI Login Code",
-			"user": user,
-			"code_hash": _code_hash(code),
-			"status": "Pending",
-			"attempts": 0,
-			"expires_at": (now_datetime() + CODE_TTL).strftime("%Y-%m-%d %H:%M:%S"),
-			"ip": _client_ip(),
-		}
-	)
-	doc.insert(ignore_permissions=True)
-	_send_code_email(email, _display_name(email), code, resend)
-	return {"sent": True, "expires_in": int(CODE_TTL.total_seconds())}
+	return issue_login_code(user, resend)
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
