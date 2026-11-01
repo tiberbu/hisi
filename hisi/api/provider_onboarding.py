@@ -32,7 +32,7 @@ from hisi.api.surveillance.onboarding import (
 )
 
 PROVIDER_ROLE = "HISI Insurance Provider"
-PLATFORM_ROLES = ("System Manager", "HISI Reviewer")
+PLATFORM_ROLES = ("Administrator", "System Manager", "HISI Reviewer")
 COMPANY_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 &'.()-]{1,119}$")
 
 
