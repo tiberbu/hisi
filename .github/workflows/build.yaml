@@ -10,9 +10,9 @@ env:
   AWS_REGION: eu-west-2
   IMAGE_NAME: paperless
   FRAPPE_REPO: https://github.com/frappe/frappe
-  FRAPPE_VERSION: version-15
-  PY_VERSION: "3.11.6"
-  NODEJS_VERSION: "22.11.0"
+  FRAPPE_VERSION: version-16
+  PY_VERSION: "3.14.10"
+  NODEJS_VERSION: "24.22.2"
   DOCKERFILE: images/custom/Containerfile
 
 jobs:
@@ -57,8 +57,8 @@ jobs:
               "branch": "develop"
             },
             {
-              "url": "https://github.com/frappe/erpnext",
-               "branch": "version-15"
+              "url": "https://github.com/frappe/erpnext.git",
+              "branch": "version-16"
             }
           ]
           EOF
