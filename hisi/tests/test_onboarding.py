@@ -2,11 +2,30 @@ import json
 from unittest.mock import patch
 
 import frappe
+from frappe.auth import CookieManager, LoginManager
 from frappe.utils.password import check_password, update_password
 
 from hisi.api.auth import complete_password_reset
 from hisi.api.surveillance import onboarding
 from hisi.tests.test_surveillance import SurveillanceTestCase
+
+
+class _RequestStub:
+	"""Minimal stand-in for the werkzeug Request in the test runner.
+
+	Attribute access works (Session/LoginManager read .path/.cookies), but
+	the stub is falsy, so request-presence gates (rate limiter, CSRF) behave
+	as if there were no request — matching the rest of the suite.
+	"""
+
+	path = "/tests"
+	method = "GET"
+	scheme = "http"
+	cookies = {}
+	headers = {}
+
+	def __bool__(self):
+		return False
 
 
 class TestOfficerOnboarding(SurveillanceTestCase):
@@ -16,6 +35,16 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 
 	def setUp(self):
 		super().setUp()
+		# The onboarding flow signs users in through frappe.local.login_manager,
+		# which only exists on real HTTP requests (RequestContext.set_session);
+		# emulate the request context so login_as() works under the test runner.
+		if not hasattr(frappe.local, "request"):
+			frappe.local.request = _RequestStub()
+		frappe.local.cookie_manager = CookieManager()
+		frappe.local.login_manager = LoginManager()
+		# Mock sendmail so the invite flow records mail calls for assertions
+		# without real delivery. (Commit neutralisation lives in the base
+		# SurveillanceTestCase, which keeps the per-test savepoint intact.)
 		self.mail_patcher = patch("frappe.sendmail")
 		self.sent_mail = self.mail_patcher.start()
 
@@ -106,8 +135,9 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 		self.assertEqual(invite[0]["company"], self.org)
 		self.assertEqual(invite[0]["account_created"], 1)
 		code = invite[0]["code"]
-		# The code is never the account's password (a placeholder is set).
-		self.assertNotEqual(check_password(email, code), email)
+		# The code is never the account's password (a placeholder is set);
+		# check_password raises on mismatch.
+		self.assertRaises(frappe.AuthenticationError, check_password, email, code)
 		# The styled email goes out with the code and the app sign-in link.
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [email])
@@ -175,7 +205,8 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 		# The returned key sets the first password (and signs the user in).
 		complete_password_reset(key=out["key"], new_password="First-Pass-123")
 		self.assertEqual(check_password(email, "First-Pass-123"), email)
-		self.assertNotEqual(check_password(email, code), email)
+		# check_password raises on mismatch.
+		self.assertRaises(frappe.AuthenticationError, check_password, email, code)
 		self.assertEqual(frappe.db.get_value("User", email, "reset_password_key") or "", "")
 		# The code cannot be reused.
 		self.assertRaises(frappe.ValidationError, onboarding.verify_invite_code, email=email, code=code)

@@ -103,7 +103,15 @@ def upsert_org_employee(user: str, company: str, designation: str | None = None)
 	)
 	if designation:
 		doc.designation = ensure_designation(designation)
-	doc.insert(ignore_permissions=True)
+	# Employee's user-permission hooks (create_user_permission) run as the
+	# current user, but API callers (dispatchers/officers) have no User
+	# Permission rights; the bookkeeping insert must run as Administrator.
+	previous_user = frappe.session.user
+	frappe.set_user("Administrator")
+	try:
+		doc.insert(ignore_permissions=True)
+	finally:
+		frappe.set_user(previous_user)
 	return doc.name
 
 

@@ -65,7 +65,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "active\ncompleted\nexpired\nrevoked"
+   "options": "active\npaused\ncompleted\nexpired\nrevoked"
   },
   {
    "fieldname": "started_at",

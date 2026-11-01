@@ -1,4 +1,5 @@
 import json
+import re
 import time
 
 import frappe
@@ -169,16 +170,22 @@ def list_sessions(page=None, page_size=None, status=None, location_status=None):
 	if location_status not in (None, ""):
 		filters["location_status"] = str(location_status).strip()
 	orgs = _payer_companies(user)
-	if not orgs:
-		log_event(None, user, "scope_denied", "session", None, outcome="denied", duration_ms=_duration_ms(start))
-		raise Forbidden("You are not a member of a payer organization.")
-	scope_kind = "payer"
-	mandate_names = frappe.get_all("HISI Surveillance Mandate", filters={"company": ["in", orgs]}, pluck="name")
-	filters["mandate"] = ["in", mandate_names or [""]]
+	if orgs:
+		scope_kind = "payer"
+		mandate_names = frappe.get_all("HISI Surveillance Mandate", filters={"company": ["in", orgs]}, pluck="name")
+		filters["mandate"] = ["in", mandate_names or [""]]
+	else:
+		# Officer scope: an officer who is not a payer member sees their own
+		# sessions (the findings trail of the mandates they worked).
+		if "HISI Insurance Surveillance" not in frappe.get_roles(user):
+			log_event(None, user, "scope_denied", "session", None, outcome="denied", duration_ms=_duration_ms(start))
+			raise Forbidden("You are not a member of a payer organization.")
+		scope_kind = "officer"
+		filters["user"] = user
 	rows = frappe.get_all(
 		"HISI Surveillance Session",
 		filters=filters,
-		fields=["session_no", "mandate", "user", "status", "location_status", "checkin_distance_m", "checkin_flags", "started_at", "ends_at"],
+		fields=["name", "session_no", "mandate", "user", "status", "location_status", "checkin_distance_m", "checkin_flags", "started_at", "ends_at", "summary"],
 		order_by="creation desc",
 	)
 	total = len(rows)
@@ -190,6 +197,15 @@ def list_sessions(page=None, page_size=None, status=None, location_status=None):
 	if mandate_names:
 		for row in frappe.get_all("HISI Surveillance Mandate", filters={"name": ["in", mandate_names]}, fields=["name", "facility"]):
 			facilities[row["name"]] = row["facility"]
+	attachment_counts = {}
+	session_names = [row["name"] for row in page_rows if row["name"]]
+	if session_names:
+		for row in frappe.get_all(
+			"File",
+			filters={"attached_to_doctype": "HISI Surveillance Session", "attached_to_name": ["in", session_names]},
+			fields=["attached_to_name"],
+		):
+			attachment_counts[row["attached_to_name"]] = attachment_counts.get(row["attached_to_name"], 0) + 1
 	sessions = []
 	for row in page_rows:
 		sessions.append(
@@ -202,6 +218,8 @@ def list_sessions(page=None, page_size=None, status=None, location_status=None):
 				"location_status": row["location_status"],
 				"checkin_distance_m": row["checkin_distance_m"],
 				"flags": json.loads(row["checkin_flags"] or "[]"),
+				"summary_excerpt": re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", row["summary"] or "")).strip()[:160] or None,
+				"attachment_count": attachment_counts.get(row["name"], 0),
 				"started_at": str(row["started_at"]) if row["started_at"] else None,
 				"ends_at": str(row["ends_at"]) if row["ends_at"] else None,
 			}
@@ -234,11 +252,17 @@ def list_mandates(page=None, page_size=None, status=None):
 	if status not in (None, ""):
 		filters["status"] = str(status).strip()
 	orgs = _payer_companies(user)
-	if not orgs:
-		log_event(None, user, "scope_denied", "mandate", None, outcome="denied", duration_ms=_duration_ms(start))
-		raise Forbidden("You are not a member of a payer organization.")
-	scope_kind = "payer"
-	filters["company"] = ["in", orgs]
+	if orgs:
+		scope_kind = "payer"
+		filters["company"] = ["in", orgs]
+	else:
+		# Officer scope: a surveillance officer who is not a payer member sees
+		# the mandates dispatched to them (the queue they accept from).
+		if "HISI Insurance Surveillance" not in frappe.get_roles(user):
+			log_event(None, user, "scope_denied", "mandate", None, outcome="denied", duration_ms=_duration_ms(start))
+			raise Forbidden("You are not a member of a payer organization.")
+		scope_kind = "officer"
+		filters["assigned_officer"] = user
 	rows = frappe.get_all(
 		"HISI Surveillance Mandate",
 		filters=filters,
@@ -264,6 +288,19 @@ def list_mandates(page=None, page_size=None, status=None):
 			if line["note"]:
 				entry["note"] = line["note"]
 			scope_by_mandate.setdefault(line["parent"], []).append(entry)
+	# Per-mandate session state for the queue: the newest session decides
+	# the row's next step (in progress / paused / completed / closed / none).
+	session_state_by_mandate = {}
+	if page_rows:
+		for row in frappe.get_all(
+			"HISI Surveillance Session",
+			filters={"mandate": ["in", [r["name"] for r in page_rows]]},
+			fields=["mandate", "status", "creation"],
+			order_by="creation desc",
+		):
+			if row["mandate"] not in session_state_by_mandate:
+				state_map = {"active": "in_progress", "paused": "paused", "completed": "completed", "expired": "closed", "revoked": "closed"}
+				session_state_by_mandate[row["mandate"]] = state_map.get(row["status"], "none")
 	mandates = []
 	for row in page_rows:
 		lines = scope_by_mandate.get(row["name"], [])
@@ -274,6 +311,7 @@ def list_mandates(page=None, page_size=None, status=None):
 				"facility_name": row["facility"],
 				"assigned_officer": row["assigned_officer"],
 				"status": row["status"],
+				"session_state": session_state_by_mandate.get(row["name"], "none"),
 				"scope_counts": {
 					"patient": sum(1 for entry in lines if entry["line_type"] == "patient"),
 					"visit": sum(1 for entry in lines if entry["line_type"] != "patient"),
