@@ -39,6 +39,33 @@ def render_email_template(name: str, args: dict | None = None) -> tuple[str, str
 	return ((doc.subject or "").strip() or name, html)
 
 
+def send_reset_email(user_doc, link: str) -> None:
+	"""Send the branded password-reset email.
+
+	Subject/body from the ``HISI Forgot Password`` **Email Template** record;
+	sender from the default outgoing **Email Account** (see
+	:func:`get_outgoing_sender`). Shared by the framework ``reset_password``
+	override and the app's ``request_password_reset`` endpoint.
+	"""
+	first_name = (user_doc.first_name or user_doc.last_name or "").strip()
+	subject, html = render_email_template(
+		"HISI Forgot Password",
+		{
+			"first_name": first_name or "there",
+			"link": link,
+		},
+	)
+	frappe.sendmail(
+		recipients=[user_doc.email],
+		sender=get_outgoing_sender(),
+		subject=subject,
+		message=html,
+		raw_html=True,
+		add_unsubscribe_link=0,
+		now=True,
+	)
+
+
 def get_dha_verify_url() -> str:
 	"""DHA register base URL: HISI Settings, then site config, then environment.
 
