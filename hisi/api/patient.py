@@ -4,6 +4,7 @@ import hmac
 import json
 import time
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from urllib.parse import quote
 import frappe
 import requests
@@ -193,6 +194,625 @@ def parse_fhir_bundle(payload) -> list:
     resource = payload.get("resource")
     return [resource] if isinstance(resource, dict) else []
 
+# ---------------------------------------------------------------------------
+# FHIR resource detail extraction
+#
+# The records step reveals raw FHIR R4 resources (Encounter, Claim, Condition,
+# ...). Each resource is enriched with an ordered `details` list of
+# label/value pairs so the UI can render every meaningful field - including
+# the SHA-specific Claim extensions (patient invoice, contribution status,
+# per-scheme coverage, principal contributor) - without re-parsing FHIR
+# client-side.
+# ---------------------------------------------------------------------------
+
+def _text(value) -> str:
+    return str(value).strip() if value is not None else ""
+
+def _code_or_text(node) -> tuple:
+    """(code, display) from a plain string, Coding, or CodeableConcept node."""
+    if isinstance(node, str):
+        value = node.strip()
+        return value, value
+    if isinstance(node, dict):
+        codings = node.get("coding")
+        if isinstance(codings, list):
+            for coding in codings:
+                if isinstance(coding, dict) and (coding.get("code") or coding.get("display")):
+                    return _text(coding.get("code")), _text(coding.get("display"))
+        return "", _text(node.get("text"))
+    return "", ""
+
+def _concept_text(node) -> str:
+    code, display = _code_or_text(node)
+    if display and code and display.lower() != code.lower():
+        return "{} ({})".format(display, code)
+    return display or code
+
+def _money(node) -> str:
+    """Human money: currency first with thousands separators ("KES 134,400");
+    missing or zero amounts read as "Not priced"."""
+    if not isinstance(node, dict):
+        return ""
+    value = node.get("value")
+    currency = _text(node.get("currency"))
+    if value in (None, ""):
+        return "Not priced"
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return "{} {}".format(value, currency).strip()
+    if amount == 0:
+        return "Not priced"
+    text = "{:,.0f}".format(amount) if amount == amount.to_integral_value() else "{:,.2f}".format(amount)
+    return "{} {}".format(currency, text).strip()
+
+def _date_part(value) -> str:
+    """Date portion of an ISO date/datetime (drops the time-of-day)."""
+    value = _text(value)
+    if len(value) >= 10 and value[4:5] == "-":
+        return value[:10]
+    return value
+
+def _date_range(node) -> str:
+    if not isinstance(node, dict):
+        return ""
+    start, end = _text(node.get("start")), _text(node.get("end"))
+    if start and end and start != end:
+        return "{} - {}".format(start, end)
+    return start or end
+
+def _ref_text(node) -> str:
+    """Plain text for a Reference: display, then id, then the reference tail."""
+    if isinstance(node, str):
+        return node.split("/")[-1] if "/" in node else node
+    if not isinstance(node, dict):
+        return ""
+    if node.get("display"):
+        return _text(node.get("display"))
+    if node.get("id"):
+        return _text(node.get("id"))
+    reference = _text(node.get("reference"))
+    return reference.split("/")[-1] if reference else ""
+
+def _append(details: list, label: str, value, sub=None) -> None:
+    value = _text(value)
+    if value:
+        sub = _text(sub)
+        details.append((label, value, sub) if sub else (label, value))
+
+def _contribution_status_details(raw, details: list, seen: set) -> None:
+    """Parse the SHA contributionStatus extension (a JSON string embedded in
+    the Claim): overall status, per-scheme coverage and the principal
+    contributor behind each scheme."""
+    if not raw:
+        return
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    _append(details, "Contribution status", data.get("statusDesc"))
+    for scheme in data.get("schemes") or []:
+        if not isinstance(scheme, dict):
+            continue
+        name = _text(scheme.get("schemeName"))
+        coverage = scheme.get("coverage") if isinstance(scheme.get("coverage"), dict) else {}
+        policy = scheme.get("policy") if isinstance(scheme.get("policy"), dict) else {}
+        covered = _text(coverage.get("status")) == COVERAGE_ACTIVE_STATUS
+        bits = ["covered" if covered else "not covered"]
+        reason = _text(coverage.get("reason"))
+        if reason:
+            bits.append(reason)
+        policy_number = _text(policy.get("number"))
+        if policy_number:
+            bits.append("policy " + policy_number)
+        policy_period = _date_range(policy)
+        if policy_period:
+            bits.append(policy_period)
+        if name:
+            details.append(("Coverage - {}".format(name), ", ".join(bits)))
+        principal = scheme.get("principalContributor")
+        if isinstance(principal, dict):
+            principal_name = _text(principal.get("name"))
+            if principal_name:
+                pbits = [principal_name]
+                relationship = _text(principal.get("relationship"))
+                if relationship:
+                    pbits.append(relationship)
+                employment = _text(principal.get("employmentType"))
+                if employment:
+                    pbits.append(employment)
+                employer = principal.get("employerDetails")
+                if isinstance(employer, dict):
+                    employer_name = _text(employer.get("name"))
+                    if employer_name:
+                        pbits.append(employer_name)
+                    compliance = _text(employer.get("complianceStatus"))
+                    if compliance:
+                        pbits.append(compliance)
+                key = " | ".join(pbits)
+                if key not in seen:
+                    seen.add(key)
+                    details.append(("Principal contributor", key))
+
+def _claim_kind(use_code: str) -> str:
+    """Human label for Claim.use: claim, preauthorization or quote."""
+    if use_code == "preauthorization":
+        return "Preauthorization request"
+    if use_code == "quote":
+        return "Quote request"
+    if use_code == "claim":
+        return "Claim"
+    return ""
+
+def _visit_conditions(records: list) -> list:
+    """(code, display) pairs from every Condition resource in the visit, so a
+    Claim hero band can name the clinical condition behind the billing."""
+    pairs = []
+    for record in records:
+        if not isinstance(record, dict) or _text(record.get("resourceType")) != "Condition":
+            continue
+        code, display = _code_or_text(record.get("code"))
+        if not display and not code:
+            continue
+        pairs.append((code, display or code))
+    return pairs
+
+def _claim_condition(diagnosis_codes: set, conditions: list) -> tuple:
+    """Best-effort link between a Claim's diagnoses and the visit's Condition
+    resources: an exact ICD code match wins, a lone condition is taken as-is.
+    Returns (code, display) so the UI can show the code small under the name."""
+    if not conditions:
+        return "", ""
+    if len(conditions) == 1:
+        return conditions[0]
+    for code, display in conditions:
+        if code and code in diagnosis_codes:
+            return code, display
+    return "", "; ".join(display for _, display in conditions)
+
+def _claim_details(claim: dict, conditions: list = ()) -> tuple:
+    claim_group = []
+    billing_group = []
+    coverage_group = []
+    diagnosis_group = []
+    use_code, _ = _code_or_text(claim.get("use"))
+    kind = _claim_kind(use_code)
+    _append(claim_group, "Kind", kind)
+    _append(claim_group, "Status", claim.get("status"))
+    _append(claim_group, "Claim type", _concept_text(claim.get("type")))
+    _append(claim_group, "Sub-type", _concept_text(claim.get("subType")))
+    _append(claim_group, "Priority", _concept_text(claim.get("priority")))
+    _append(claim_group, "Created", claim.get("created"))
+    _append(claim_group, "Billable period", _date_range(claim.get("billablePeriod")))
+    _append(claim_group, "Insurer", _ref_text(claim.get("insurer")))
+    patient_ref = claim.get("patient")
+    patient_id = _text(patient_ref.get("reference").split("/")[-1]) if isinstance(patient_ref, dict) and patient_ref.get("reference") else ""
+    _append(claim_group, "Patient", _ref_text(claim.get("patient")), patient_id)
+    _append(claim_group, "Provider", _ref_text(claim.get("provider")))
+    total = _money(claim.get("total"))
+    for extension in claim.get("extension") or []:
+        if not isinstance(extension, dict):
+            continue
+        url = _text(extension.get("url"))
+        if url.endswith("extension-patientInvoice"):
+            for child in extension.get("extension") or []:
+                if not isinstance(child, dict):
+                    continue
+                key = _text(child.get("url"))
+                if key == "serviceType":
+                    _append(billing_group, "Service type", child.get("valueString"))
+                elif key == "invoiceNumber":
+                    value = _text(child.get("valueString")).replace("Provider Invoice Number:", "").strip()
+                    _append(billing_group, "Invoice number", value)
+                elif key == "invoiceDate":
+                    _append(billing_group, "Invoice date", child.get("valueDate"))
+                elif key == "invoiceAmount":
+                    _append(billing_group, "Invoice amount", _money(child.get("valueMoney")))
+                elif key.endswith("extension-patient-share"):
+                    _append(billing_group, "Patient share", _money(child.get("valueMoney")))
+        elif url.endswith("contributionStatus"):
+            _contribution_status_details(extension.get("valueString"), coverage_group, set())
+    diagnosis_bits = []
+    diagnosis_codes = set()
+    for diagnosis in claim.get("diagnosis") or []:
+        if not isinstance(diagnosis, dict):
+            continue
+        code, display = _code_or_text(diagnosis.get("diagnosisCodeableConcept"))
+        if code:
+            diagnosis_codes.add(code)
+        if display:
+            diagnosis_bits.append(display)
+        code_text = _concept_text(diagnosis.get("diagnosisCodeableConcept"))
+        if code_text:
+            sequence = diagnosis.get("sequence")
+            _append(diagnosis_group, "Diagnosis #{}".format(sequence) if sequence else "Diagnosis", code_text)
+    items = claim.get("item") or []
+    line_rows = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        description_bits = []
+        category_display = _code_or_text(item.get("category"))[1]
+        if category_display:
+            description_bits.append(category_display)
+        service = _concept_text(item.get("productOrService"))
+        if service:
+            description_bits.append(service)
+        quantity = item.get("quantity")
+        if isinstance(quantity, dict) and quantity.get("value") not in (None, ""):
+            description_bits.append("{} x".format(quantity.get("value")))
+        line_rows.append([
+            str(index),
+            "; ".join(description_bits) or "-",
+            _money(item.get("unitPrice")) or "-",
+            _money(item.get("net")) or "-",
+        ])
+    _append(billing_group, "Total", total)
+    headline = []
+    if diagnosis_bits:
+        headline.append(("Diagnoses", "; ".join(diagnosis_bits), "; ".join(sorted(diagnosis_codes))))
+    billable = claim.get("billablePeriod")
+    if isinstance(billable, dict):
+        billable = {"start": _date_part(billable.get("start")), "end": _date_part(billable.get("end"))}
+    _append(headline, "Service period", _date_range(billable))
+    _append(headline, "Amount", total)
+    condition_code, condition_display = _claim_condition(diagnosis_codes, conditions)
+    _append(headline, "Condition", condition_display, condition_code)
+    summary_bits = [bit for bit in (kind, _text(claim.get("status")), "total " + total if total and total != "Not priced" else "") if bit]
+    groups = [("Claim", claim_group), ("Billing", billing_group, {
+        "columns": ["#", "Item", "Unit price", "Net"],
+        "rows": line_rows,
+    }), ("Coverage", coverage_group), ("Diagnoses", diagnosis_group)]
+    return headline, groups, ", ".join(summary_bits)
+
+def _encounter_details(encounter: dict) -> tuple:
+    visit_group = []
+    people_group = []
+    note_group = []
+    status = _text(encounter.get("status"))
+    klass = _concept_text(encounter.get("class"))
+    period = _date_range(encounter.get("period"))
+    provider = _ref_text(encounter.get("serviceProvider"))
+    headline = []
+    for label, value in (("Class", klass), ("Status", status), ("Period", period), ("Provider", provider)):
+        if value:
+            headline.append((label, value))
+    _append(visit_group, "Class", klass)
+    _append(visit_group, "Status", status)
+    _append(visit_group, "Period", period)
+    locations = []
+    for location in encounter.get("location") or []:
+        if isinstance(location, dict):
+            name = _ref_text(location.get("location"))
+            if name:
+                locations.append(name)
+    _append(visit_group, "Location", "; ".join(locations))
+    subject_ref = encounter.get("subject")
+    subject_id = _text(subject_ref.get("reference").split("/")[-1]) if isinstance(subject_ref, dict) and subject_ref.get("reference") else ""
+    _append(people_group, "Patient", _ref_text(encounter.get("subject")), subject_id)
+    _append(people_group, "Provider", provider)
+    participants = []
+    for participant in encounter.get("participant") or []:
+        if isinstance(participant, dict):
+            individual = _ref_text(participant.get("individual"))
+            if individual:
+                participants.append(individual)
+    _append(people_group, "Participants", "; ".join(participants))
+    for note in encounter.get("note") or []:
+        if isinstance(note, dict):
+            _append(note_group, "Note", note.get("text"))
+    groups = [("Visit", visit_group), ("People", people_group), ("Notes", note_group)]
+    return headline, groups, ", ".join(bit for bit in (klass, status, period) if bit)
+
+def _condition_details(condition: dict) -> tuple:
+    diagnosis_group = []
+    status_group = []
+    diagnosis_code, diagnosis_display = _code_or_text(condition.get("code"))
+    diagnosis = _concept_text(condition.get("code"))
+    clinical = _concept_text(condition.get("clinicalStatus"))
+    onset = _text(condition.get("onsetDateTime")) or _date_range(condition.get("onsetPeriod"))
+    headline = []
+    for label, value in (("Diagnosis", diagnosis), ("Clinical status", clinical), ("Onset", onset)):
+        if value:
+            headline.append((label, value, diagnosis_code) if label == "Diagnosis" else (label, value))
+    _append(diagnosis_group, "Diagnosis", diagnosis, diagnosis_code)
+    categories = []
+    for category in condition.get("category") or []:
+        text = _concept_text(category)
+        if text:
+            categories.append(text)
+    _append(diagnosis_group, "Category", ", ".join(categories))
+    _append(diagnosis_group, "Onset", onset)
+    _append(diagnosis_group, "Recorded", condition.get("recordedDate"))
+    _append(status_group, "Clinical status", clinical)
+    _append(status_group, "Verification", _concept_text(condition.get("verificationStatus")))
+    _append(status_group, "Encounter", _ref_text(condition.get("encounter")))
+    groups = [("Diagnosis", diagnosis_group), ("Status", status_group)]
+    return headline, groups, ", ".join(bit for bit in (diagnosis, clinical) if bit)
+
+def _organization_details(org: dict) -> tuple:
+    identity_group = []
+    contact_group = []
+    name = _text(org.get("name"))
+    types = []
+    for entry in org.get("type") or []:
+        if isinstance(entry, dict):
+            text = _concept_text(entry)
+            if text:
+                types.append(text)
+    type_text = ", ".join(types)
+    active = ""
+    if org.get("active") is not None:
+        active = "Yes" if org.get("active") else "No"
+    headline = []
+    for label, value in (("Name", name), ("Type", type_text), ("Active", active)):
+        if value:
+            headline.append((label, value))
+    _append(identity_group, "Name", name)
+    _append(identity_group, "Type", type_text)
+    _append(identity_group, "Active", active)
+    addresses = []
+    for address in org.get("address") or []:
+        if isinstance(address, dict):
+            parts = [_text(address.get(key)) for key in ("city", "district", "state", "postalCode", "country")]
+            line = ", ".join(part for part in parts if part)
+            if line:
+                addresses.append(line)
+    _append(contact_group, "Address", "; ".join(addresses))
+    contacts = []
+    for telecom in org.get("telecom") or []:
+        if isinstance(telecom, dict) and _text(telecom.get("value")):
+            system = _text(telecom.get("system"))
+            value = _text(telecom.get("value"))
+            contacts.append("{}: {}".format(system, value) if system else value)
+    _append(contact_group, "Contact", "; ".join(contacts))
+    groups = [("Identity", identity_group), ("Contact", contact_group)]
+    return headline, groups, ", ".join(bit for bit in (name, type_text) if bit)
+
+def _medication_request_details(request: dict) -> tuple:
+    prescription_group = []
+    status_group = []
+    medication = _concept_text(request.get("medicationCodeableConcept")) or _ref_text(request.get("medicationReference"))
+    status = _text(request.get("status"))
+    dosages = []
+    for instruction in request.get("dosageInstruction") or []:
+        if isinstance(instruction, dict):
+            text = _text(instruction.get("text"))
+            if text:
+                dosages.append(text)
+    dose = "; ".join(dosages)
+    headline = []
+    for label, value in (("Medication", medication), ("Status", status), ("Dose", dose)):
+        if value:
+            headline.append((label, value))
+    _append(prescription_group, "Medication", medication)
+    _append(prescription_group, "Dose", dose)
+    _append(status_group, "Status", status)
+    _append(status_group, "Intent", request.get("intent"))
+    _append(status_group, "Authored", request.get("authoredOn"))
+    _append(status_group, "Requester", _ref_text(request.get("requester")))
+    groups = [("Prescription", prescription_group), ("Status", status_group)]
+    return headline, groups, ", ".join(bit for bit in (medication, status) if bit)
+
+def _observation_details(observation: dict) -> tuple:
+    measurement_group = []
+    timing_group = []
+    code = _concept_text(observation.get("code"))
+    value_quantity = observation.get("valueQuantity")
+    if isinstance(value_quantity, dict) and value_quantity.get("value") not in (None, ""):
+        unit = _text(value_quantity.get("unit"))
+        value = "{} {}".format(value_quantity.get("value"), unit).strip()
+    else:
+        value = _text(observation.get("valueString")) or _concept_text(observation.get("valueCodeableConcept"))
+    effective = _text(observation.get("effectiveDateTime")) or _date_range(observation.get("effectivePeriod"))
+    headline = []
+    for label, val in (("Observation", code), ("Value", value), ("Effective", effective)):
+        if val:
+            headline.append((label, val))
+    _append(measurement_group, "Observation", code)
+    _append(measurement_group, "Value", value)
+    _append(timing_group, "Status", observation.get("status"))
+    _append(timing_group, "Effective", effective)
+    _append(timing_group, "Issued", observation.get("issued"))
+    groups = [("Measurement", measurement_group), ("Timing", timing_group)]
+    return headline, groups, ", ".join(bit for bit in (code, value) if bit)
+
+def _service_request_details(request: dict) -> tuple:
+    request_group = []
+    status_group = []
+    service = _concept_text(request.get("code"))
+    status = _text(request.get("status"))
+    occurrence = _text(request.get("occurrenceDateTime")) or _date_range(request.get("occurrencePeriod"))
+    headline = []
+    for label, value in (("Service", service), ("Status", status), ("Occurrence", occurrence)):
+        if value:
+            headline.append((label, value))
+    _append(request_group, "Service", service)
+    _append(request_group, "Occurrence", occurrence)
+    _append(status_group, "Intent", request.get("intent"))
+    _append(status_group, "Status", status)
+    _append(status_group, "Authored", request.get("authoredOn"))
+    _append(status_group, "Requester", _ref_text(request.get("requester")))
+    groups = [("Request", request_group), ("Status", status_group)]
+    return headline, groups, ", ".join(bit for bit in (service, status) if bit)
+
+def _procedure_details(procedure: dict) -> tuple:
+    procedure_group = []
+    status_group = []
+    code = _concept_text(procedure.get("code"))
+    status = _text(procedure.get("status"))
+    performed = _text(procedure.get("performedDateTime")) or _date_range(procedure.get("performedPeriod"))
+    headline = []
+    for label, value in (("Procedure", code), ("Status", status), ("Performed", performed)):
+        if value:
+            headline.append((label, value))
+    _append(procedure_group, "Procedure", code)
+    _append(procedure_group, "Performed", performed)
+    performers = []
+    for performer in procedure.get("performer") or []:
+        if isinstance(performer, dict):
+            actor = _ref_text(performer.get("actor"))
+            if actor:
+                performers.append(actor)
+    _append(procedure_group, "Performed by", ", ".join(performers))
+    _append(status_group, "Status", status)
+    groups = [("Procedure", procedure_group), ("Status", status_group)]
+    return headline, groups, ", ".join(bit for bit in (code, status) if bit)
+
+def _diagnostic_report_details(report: dict) -> tuple:
+    report_group = []
+    status_group = []
+    code = _concept_text(report.get("code"))
+    status = _text(report.get("status"))
+    conclusion = _text(report.get("conclusion"))
+    headline = []
+    for label, value in (("Report", code), ("Status", status), ("Conclusion", conclusion)):
+        if value:
+            headline.append((label, value))
+    _append(report_group, "Report", code)
+    categories = []
+    for category in report.get("category") or []:
+        text = _concept_text(category)
+        if text:
+            categories.append(text)
+    _append(report_group, "Category", ", ".join(categories))
+    _append(report_group, "Conclusion", conclusion)
+    _append(status_group, "Status", status)
+    _append(status_group, "Issued", report.get("issued"))
+    groups = [("Report", report_group), ("Status", status_group)]
+    return headline, groups, ", ".join(bit for bit in (code, status) if bit)
+
+def _document_reference_details(document: dict) -> tuple:
+    document_group = []
+    status_group = []
+    title = _text(document.get("title"))
+    doc_type = _concept_text(document.get("type"))
+    status = _text(document.get("status"))
+    headline = []
+    for label, value in (("Title", title), ("Type", doc_type), ("Status", status)):
+        if value:
+            headline.append((label, value))
+    _append(document_group, "Title", title)
+    _append(document_group, "Type", doc_type)
+    _append(document_group, "Description", document.get("description"))
+    _append(status_group, "Status", status)
+    _append(status_group, "Created", document.get("created"))
+    groups = [("Document", document_group), ("Status", status_group)]
+    return headline, groups, ", ".join(bit for bit in (title, doc_type) if bit)
+
+def _allergy_details(allergy: dict) -> tuple:
+    allergy_group = []
+    status_group = []
+    substance = _concept_text(allergy.get("code"))
+    clinical = _concept_text(allergy.get("clinicalStatus"))
+    criticality = _text(allergy.get("criticality"))
+    headline = []
+    for label, value in (("Substance", substance), ("Clinical status", clinical), ("Criticality", criticality)):
+        if value:
+            headline.append((label, value))
+    _append(allergy_group, "Substance", substance)
+    categories = []
+    for category in allergy.get("category") or []:
+        text = _text(category)
+        if text:
+            categories.append(text)
+    _append(allergy_group, "Category", ", ".join(categories))
+    _append(allergy_group, "Criticality", criticality)
+    _append(status_group, "Clinical status", clinical)
+    groups = [("Allergy", allergy_group), ("Status", status_group)]
+    return headline, groups, ", ".join(bit for bit in (substance, clinical) if bit)
+
+def _coverage_details(coverage: dict) -> tuple:
+    coverage_group = []
+    status_group = []
+    name = _text(coverage.get("name"))
+    status = _text(coverage.get("status"))
+    payors = []
+    for payor in coverage.get("payor") or []:
+        if isinstance(payor, dict):
+            payor_name = _ref_text(payor.get("reference"))
+            if payor_name:
+                payors.append(payor_name)
+    payor_text = ", ".join(payors)
+    headline = []
+    for label, value in (("Name", name), ("Status", status), ("Payor", payor_text)):
+        if value:
+            headline.append((label, value))
+    _append(coverage_group, "Name", name)
+    _append(coverage_group, "Subscriber", _ref_text(coverage.get("subscriber")))
+    _append(coverage_group, "Beneficiary", _ref_text(coverage.get("beneficiary")))
+    _append(coverage_group, "Payor", payor_text)
+    _append(status_group, "Status", status)
+    _append(status_group, "Period", _date_range(coverage.get("period")))
+    groups = [("Coverage", coverage_group), ("Status", status_group)]
+    return headline, groups, ", ".join(bit for bit in (name, status) if bit)
+
+FHIR_DETAIL_EXTRACTORS = {
+    "Claim": _claim_details,
+    "Encounter": _encounter_details,
+    "Condition": _condition_details,
+    "Organization": _organization_details,
+    "MedicationRequest": _medication_request_details,
+    "Observation": _observation_details,
+    "ServiceRequest": _service_request_details,
+    "Procedure": _procedure_details,
+    "DiagnosticReport": _diagnostic_report_details,
+    "DocumentReference": _document_reference_details,
+    "AllergyIntolerance": _allergy_details,
+    "Coverage": _coverage_details,
+}
+
+def enrich_fhir_records(records: list) -> list:
+    """Attach a curated `headline`, a grouped `groups` tree and a one-line
+    `summary` to every raw FHIR resource so the UI can layer the data:
+    key facts up front, full detail in collapsible groups."""
+    conditions = _visit_conditions(records)
+    enriched = []
+    for resource in records:
+        if not isinstance(resource, dict):
+            continue
+        record = dict(resource)
+        extractor = FHIR_DETAIL_EXTRACTORS.get(_text(resource.get("resourceType")))
+        headline, groups, summary = [], [], ""
+        if extractor:
+            if _text(resource.get("resourceType")) == "Claim":
+                headline, groups, summary = extractor(resource, conditions)
+            else:
+                headline, groups, summary = extractor(resource)
+        meta = resource.get("meta")
+        if isinstance(meta, dict) and meta.get("lastUpdated"):
+            groups.append(("Metadata", [("Last updated", meta.get("lastUpdated"))]))
+        if headline:
+            record["headline"] = [
+                {"label": entry[0], "value": entry[1], **({"sub": entry[2]} if len(entry) > 2 and entry[2] else {})}
+                for entry in headline
+            ]
+        if groups:
+            serialized_groups = []
+            for group in groups:
+                title = group[0]
+                items = group[1]
+                table = group[2] if len(group) > 2 and isinstance(group[2], dict) else None
+                if not items and not table:
+                    continue
+                serialized = {
+                    "title": title,
+                    "items": [
+                        {"label": entry[0], "value": entry[1], **({"sub": entry[2]} if len(entry) > 2 and entry[2] else {})}
+                        for entry in items
+                    ],
+                }
+                if table:
+                    serialized["table"] = table
+                serialized_groups.append(serialized)
+            record["groups"] = serialized_groups
+        if summary:
+            record["summary"] = summary
+        enriched.append(record)
+    return enriched
+
 def fetch_patient_records(visit_id: str) -> list:
     visit_id = str(visit_id or "").strip()
     if not visit_id:
@@ -205,7 +825,7 @@ def fetch_patient_records(visit_id: str) -> list:
         key = str(row.get("param_key") or "").strip()
         if key:
             params.append((key, str(row.get("param_value") or "").strip()))
-    return parse_fhir_bundle(aws_get(path, params, host, access_key, secret_key, region))
+    return enrich_fhir_records(parse_fhir_bundle(aws_get(path, params, host, access_key, secret_key, region)))
 
 def parse_records(payload) -> list:
     if isinstance(payload, list):
@@ -289,6 +909,81 @@ def parse_eligibility(payload) -> dict:
         eligible = status.lower() in ELIGIBLE_STATUSES
     return {"eligible": eligible, "status": status, "scheme": scheme, "schemes": schemes}
 
+def patient_profile(record: dict) -> dict:
+    """Full register dossier for one patient/member record (primary or dependant)."""
+    meta = record.get("meta") or {}
+    origin = record.get("originSystem") or {}
+    other_identifications = [
+        {
+            "identification_type": ident.get("identification_type") or "",
+            "identification_number": ident.get("identification_number") or "",
+        }
+        for ident in record.get("other_identifications") or []
+        if isinstance(ident, dict)
+    ]
+    return {
+        "cr_id": cr_id_of(record),
+        "name": patient_name(record),
+        "title": record.get("title") or "",
+        "first_name": record.get("first_name") or "",
+        "middle_name": record.get("middle_name") or "",
+        "last_name": record.get("last_name") or "",
+        "gender": record.get("gender") or "",
+        "date_of_birth": record.get("date_of_birth") or "",
+        "place_of_birth": record.get("place_of_birth") or "",
+        "citizenship": record.get("citizenship") or "",
+        "civil_status": record.get("civil_status") or "",
+        "employment_type": record.get("employment_type") or "",
+        "employer_name": record.get("employer_name") or "",
+        "msisdn": record.get("msisdn") or record.get("phone") or "",
+        "email": record.get("email") or "",
+        "client_status": record.get("client_status") or "",
+        "identification_type": record.get("identification_type") or "",
+        "identification_number": record.get("identification_number") or "",
+        "other_identifications": other_identifications,
+        "is_alive": bool(record.get("is_alive")),
+        "deceased_datetime": record.get("deceased_datetime") or "",
+        "identity_verified": bool(record.get("identity_verified")),
+        "biometrics_verified": bool(record.get("biometrics_verified")),
+        "person_with_disability": bool(record.get("person_with_disability")),
+        "disability_certificate_no": record.get("disability_certificate_no") or "",
+        "id_serial": record.get("id_serial") or "",
+        "address": {
+            "country": record.get("country") or "",
+            "county": record.get("county") or "",
+            "sub_county": record.get("sub_county") or "",
+            "ward": record.get("ward") or "",
+            "village_estate": record.get("village_estate") or "",
+            "postal_address": record.get("postal_address") or "",
+            "zip_code": record.get("zip_code") or "",
+        },
+        "contributions": {
+            "estimated_contribution": record.get("estimated_contribution"),
+            "estimated_annual_contribution": record.get("estimated_annual_contribution"),
+            "gross_income": record.get("gross_income"),
+            "gross_income_currency": record.get("gross_income_currency") or "",
+        },
+        "created": meta.get("creationTime") or "",
+        "last_updated": meta.get("lastUpdated") or "",
+        "source": meta.get("source") or "",
+        "origin_system": origin.get("system") or "",
+    }
+
+def dependants_summary(patient: dict) -> list:
+    dependants = []
+    for entry in patient.get("dependants") or []:
+        if not isinstance(entry, dict):
+            continue
+        members = entry.get("result")
+        members = members if isinstance(members, list) else [entry]
+        dependants.append({
+            "relationship": entry.get("relationship") or "",
+            "date_added": entry.get("date_added") or "",
+            "total": entry.get("total") or len(members),
+            "members": [patient_profile(member) for member in members if isinstance(member, dict)],
+        })
+    return dependants
+
 def step_patient(filters: dict) -> dict:
     doc = settings_doc()
     base_url = (doc.get("base_url") or "").strip()
@@ -309,16 +1004,11 @@ def step_patient(filters: dict) -> dict:
     if not patients:
         raise NotFound("No patient found for the given identifier.")
     patient = patients[0]
-    return {
-        "cr_id": cr_id_of(patient),
-        "name": patient_name(patient),
-        "gender": patient.get("gender") or "",
-        "msisdn": patient.get("msisdn") or "",
-        "date_of_birth": patient.get("date_of_birth") or "",
-        "client_status": patient.get("client_status") or "",
-        "identification_type": patient.get("identification_type") or identification_type,
-        "identification_number": patient.get("identification_number") or identification_number,
-    }
+    profile = patient_profile(patient)
+    profile["identification_type"] = profile.get("identification_type") or identification_type
+    profile["identification_number"] = profile.get("identification_number") or identification_number
+    profile["dependants"] = dependants_summary(patient)
+    return profile
 
 def step_eligibility(cr_id: str, filters: dict) -> dict:
     doc = settings_doc()
@@ -329,18 +1019,21 @@ def step_eligibility(cr_id: str, filters: dict) -> dict:
     request_id_type = filters.get("requestIdType")
     request_id_number = filters.get("requestIdNumber")
     if request_id_type in (None, "") or request_id_number in (None, ""):
-        identification_type = str(filters.get("identification_type") or "").strip()
-        identification_number = str(filters.get("identification_number") or "").strip()
-        if identification_type and identification_number:
-            request_id_type = REQUEST_ID_TYPES.get(identification_type)
-            if request_id_type is None:
-                raise BadRequest("No requestIdType mapping for identification_type {}; pass requestIdType and requestIdNumber filters.".format(identification_type))
-            request_id_number = identification_number
-        elif cr_id:
+        if cr_id:
+            # Prefer the CR ID resolved by the patient step (or cr_id filter);
+            # DHA eligibility accepts it directly without an identification-type mapping.
             request_id_type = REQUEST_ID_TYPES["CR ID"]
             request_id_number = cr_id
         else:
-            raise BadRequest("The eligibility step needs requestIdType + requestIdNumber, identification_type + identification_number, or a cr_id filter.")
+            identification_type = str(filters.get("identification_type") or "").strip()
+            identification_number = str(filters.get("identification_number") or "").strip()
+            if identification_type and identification_number:
+                request_id_type = REQUEST_ID_TYPES.get(identification_type)
+                if request_id_type is None:
+                    raise BadRequest("No requestIdType mapping for identification_type {}; pass requestIdType and requestIdNumber filters.".format(identification_type))
+                request_id_number = identification_number
+            else:
+                raise BadRequest("The eligibility step needs requestIdType + requestIdNumber, a cr_id filter, or identification_type + identification_number.")
     body = {"requestIdType": int(request_id_type), "requestIdNumber": str(request_id_number)}
     return parse_eligibility(http_post(join_url(base_url, path), body))
 
@@ -361,6 +1054,37 @@ def step_records(visit_id: str) -> dict:
     if not visit_id:
         raise BadRequest("A visit_id is required for the records step: pass a visit_id filter or include the consent step.")
     return {"visit_id": visit_id, "records": fetch_patient_records(visit_id)}
+
+MAX_RECORD_VISITS = 5
+
+def step_records_multi(filters: dict, results: dict) -> dict:
+    """Fetch the revealed FHIR records for every consented visit (capped),
+    keeping the legacy single-visit shape (visit_id + records) for the first
+    visit so existing clients keep working."""
+    visit_ids = []
+    explicit = str(filters.get("visit_id") or "").strip()
+    if explicit:
+        visit_ids.append(explicit)
+    for record in (results.get(STEP_CONSENT) or {}).get("records") or []:
+        candidate = str(record.get("visit_id") or "").strip()
+        if candidate and candidate not in visit_ids:
+            visit_ids.append(candidate)
+    visit_ids = visit_ids[:MAX_RECORD_VISITS]
+    by_visit = {}
+    errors = {}
+    for candidate in visit_ids:
+        try:
+            by_visit[candidate] = fetch_patient_records(candidate)
+        except UpstreamError as exc:
+            by_visit[candidate] = []
+            errors[candidate] = str(exc)
+    first = visit_ids[0] if visit_ids else ""
+    return {
+        "visit_id": first,
+        "records": by_visit.get(first, []),
+        "by_visit": by_visit,
+        "errors": errors,
+    }
 
 def parse_request(data) -> tuple:
     if isinstance(data, str):
@@ -411,13 +1135,7 @@ def patient_flow(data: str | dict = "") -> dict:
     if STEP_CONSENT in steps:
         results[STEP_CONSENT] = step_consent(cr_id)
     if STEP_RECORDS in steps:
-        visit_id = str(filters.get("visit_id") or "").strip()
-        if not visit_id:
-            for record in (results.get(STEP_CONSENT) or {}).get("records") or []:
-                visit_id = str(record.get("visit_id") or "").strip()
-                if visit_id:
-                    break
-        results[STEP_RECORDS] = step_records(visit_id)
+        results[STEP_RECORDS] = step_records_multi(filters, results)
 
     payload = PatientFlowData(
         results=results,
