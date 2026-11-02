@@ -169,6 +169,17 @@ scheduler_events = {
 	],
 }
 
+# Overriding Methods
+# ------------------------------
+#
+# Route the framework's forgot-password endpoint through HISI so the reset
+# email is branded (HISI theme + HISI sender) and sent synchronously, instead
+# of the stock plain-text framework email from "Administrator" with the
+# "Sent via ERPNext" footer.
+override_whitelisted_methods = {
+	"frappe.core.doctype.user.user.reset_password": "hisi.api.forgot_password.reset_password",
+}
+
 # Testing
 # -------
 

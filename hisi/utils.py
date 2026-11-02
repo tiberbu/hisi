@@ -4,6 +4,10 @@ import frappe
 
 PLATFORM_ROLES = ("System Manager",)
 
+# Branded sender for all HISI transactional email (sign-in codes, officer
+# invites, password resets). Matches the default outgoing Email Account.
+EMAIL_SENDER = "HISI <no-reply-hisi@kenya-hie.health>"
+
 
 def get_dha_verify_url() -> str:
 	"""DHA register base URL: HISI Settings, then site config, then environment.

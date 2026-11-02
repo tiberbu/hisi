@@ -13,7 +13,7 @@ from hisi.api.auth import link_for_app
 from hisi.api.response_handler import APIResponse, BadRequest, Conflict, Forbidden, NotFound, api_endpoint
 from hisi.api.surveillance.audit import log_event
 from hisi.api.surveillance.mandate import caller_payer_companies
-from hisi.utils import upsert_org_employee
+from hisi.utils import EMAIL_SENDER, upsert_org_employee
 
 OFFICER_DESIGNATION = "HISI Insurance Surveillance"
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
@@ -93,6 +93,7 @@ def _send_invite_email(email, first_name, company_name, code, sign_in_url, new_a
 	try:
 		frappe.sendmail(
 			recipients=[email],
+			sender=EMAIL_SENDER,
 			subject=EMAIL_SUBJECT,
 			template="officer_invite",
 			args={
@@ -105,6 +106,7 @@ def _send_invite_email(email, first_name, company_name, code, sign_in_url, new_a
 			},
 			raw_html=True,
 			add_unsubscribe_link=0,
+			now=True,
 		)
 	except Exception as exc:
 		frappe.log_error(message=str(exc) or repr(exc), title="Officer invite email failed")

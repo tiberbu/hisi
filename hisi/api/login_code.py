@@ -19,7 +19,7 @@ from frappe.rate_limiter import rate_limit
 from frappe.utils import get_datetime, now_datetime
 
 from hisi.api.auth import link_for_app
-from hisi.utils import has_organization
+from hisi.utils import EMAIL_SENDER, has_organization
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 CODE_RE = re.compile(r"^\d{6}$")
@@ -62,6 +62,7 @@ def _send_code_email(email, first_name, code, resend):
 	try:
 		frappe.sendmail(
 			recipients=[email],
+			sender=EMAIL_SENDER,
 			subject=EMAIL_SUBJECT,
 			template="login_code",
 			args={
@@ -73,6 +74,7 @@ def _send_code_email(email, first_name, code, resend):
 			},
 			raw_html=True,
 			add_unsubscribe_link=0,
+			now=True,
 		)
 	except Exception as exc:
 		frappe.log_error(message=str(exc) or repr(exc), title="Login code email failed")
