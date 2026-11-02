@@ -329,18 +329,21 @@ def step_eligibility(cr_id: str, filters: dict) -> dict:
     request_id_type = filters.get("requestIdType")
     request_id_number = filters.get("requestIdNumber")
     if request_id_type in (None, "") or request_id_number in (None, ""):
-        identification_type = str(filters.get("identification_type") or "").strip()
-        identification_number = str(filters.get("identification_number") or "").strip()
-        if identification_type and identification_number:
-            request_id_type = REQUEST_ID_TYPES.get(identification_type)
-            if request_id_type is None:
-                raise BadRequest("No requestIdType mapping for identification_type {}; pass requestIdType and requestIdNumber filters.".format(identification_type))
-            request_id_number = identification_number
-        elif cr_id:
+        if cr_id:
+            # Prefer the CR ID resolved by the patient step (or cr_id filter);
+            # DHA eligibility accepts it directly without an identification-type mapping.
             request_id_type = REQUEST_ID_TYPES["CR ID"]
             request_id_number = cr_id
         else:
-            raise BadRequest("The eligibility step needs requestIdType + requestIdNumber, identification_type + identification_number, or a cr_id filter.")
+            identification_type = str(filters.get("identification_type") or "").strip()
+            identification_number = str(filters.get("identification_number") or "").strip()
+            if identification_type and identification_number:
+                request_id_type = REQUEST_ID_TYPES.get(identification_type)
+                if request_id_type is None:
+                    raise BadRequest("No requestIdType mapping for identification_type {}; pass requestIdType and requestIdNumber filters.".format(identification_type))
+                request_id_number = identification_number
+            else:
+                raise BadRequest("The eligibility step needs requestIdType + requestIdNumber, a cr_id filter, or identification_type + identification_number.")
     body = {"requestIdType": int(request_id_type), "requestIdNumber": str(request_id_number)}
     return parse_eligibility(http_post(join_url(base_url, path), body))
 
