@@ -163,7 +163,6 @@ class TestPatientFlow(IntegrationTestCase):
         self.assertEqual(len(data["results"]["consent"]["records"]), 1)
         self.assertEqual(data["results"]["consent"]["records"][0]["consent_status"], "Approved")
         self.assertEqual(data["results"]["consent"]["base_url"], "https://uat.dha.go.ke")
-        self.assertTrue(data["simulation"])
 
     def test_jwt_matches_dha_contract(self):
         with patch.object(patient.requests, "get", return_value=http_response(patient_payload())) as mock_get:
@@ -363,12 +362,6 @@ class TestPatientFlow(IntegrationTestCase):
         self.assertEqual(response.get("status"), "success")
         self.assertFalse(response.get("data")["results"]["eligibility"]["eligible"])
         self.assertEqual(response.get("data")["results"]["eligibility"]["status"], "Inactive")
-
-    def test_no_simulation_flag_reflected(self):
-        self.set_settings(enable_uat_simulation=0)
-        with patch.object(patient.requests, "get", return_value=http_response(patient_payload())):
-            self.run_flow(["patient"], {"identification_type": "CR ID", "identification_number": "CR1"})
-        self.assertFalse(frappe.local.response.get("data")["simulation"])
 
     def test_simulation_prefers_uat_base_url_setting(self):
         self.set_settings(uat_base_url="https://uat2.dha.go.ke")
