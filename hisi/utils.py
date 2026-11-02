@@ -4,6 +4,14 @@ import frappe
 
 PLATFORM_ROLES = ("System Manager",)
 
+# The two HISI user types. Single source of truth: the provider (payer ops)
+# dispatches surveillance mandates; the officer receives and executes them.
+PROVIDER_ROLE = "HISI Insurance Provider"
+OFFICER_ROLE = "HISI Insurance Surveillance"
+
+# Branded sender for all HISI transactional email (sign-in codes, officer
+# invites, password resets). Matches the default outgoing Email Account.
+EMAIL_SENDER = "HISI <no-reply-hisi@kenya-hie.health>"
 
 def get_dha_verify_url() -> str:
 	"""DHA register base URL: HISI Settings, then site config, then environment.

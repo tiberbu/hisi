@@ -9,7 +9,7 @@ from frappe.tests import IntegrationTestCase
 from hisi.api import patient, surveillance
 from hisi.api.response_handler import APIResponse
 from hisi.api.surveillance import location
-from hisi.utils import upsert_org_employee
+from hisi.utils import OFFICER_ROLE, PROVIDER_ROLE, upsert_org_employee
 
 NAIROBI_LAT = -1.2833
 NAIROBI_LNG = 36.8219
@@ -292,9 +292,9 @@ class SurveillanceTestCase(IntegrationTestCase):
 		# No custom roles exist any more: access comes from the standard role
 		# matrices plus Company user permissions; these users are scoped through
 		# their Employee membership (add_member) or are plain members (officers).
-		self.dispatcher = self.make_user("dispatcher@acme.example", [])
+		self.dispatcher = self.make_user("dispatcher@acme.example", [PROVIDER_ROLE])
 		self.add_member(self.org, self.dispatcher)
-		self.dispatcher_b = self.make_user("dispatcher@beta.example", [])
+		self.dispatcher_b = self.make_user("dispatcher@beta.example", [PROVIDER_ROLE])
 		self.add_member(self.org_b, self.dispatcher_b)
 		self.officer = self.make_user("officer@acme.example", [])
 		self.other_officer = self.make_user("other@acme.example", [])
@@ -454,6 +454,29 @@ class TestAuditCompleteness(SurveillanceTestCase):
 	def test_issue_by_non_provider_writes_scope_denied(self):
 		before = self.event_count()
 		frappe.set_user(self.officer)
+		surveillance.issue_mandate(
+			facility=self.facility,
+			assigned_officer=self.officer,
+			reason="x",
+			scope_lines=[{"line_type": "patient", "patient_identifier": "36637305"}],
+			valid_from=valid_window()[0],
+			expires_at=valid_window()[1],
+		)
+		self.assertEqual(frappe.local.response.get("code"), "FORBIDDEN")
+		events = self.new_events(before)
+		self.assertEqual(len(events), 1)
+		self.assertEqual(events[0]["event_type"], "scope_denied")
+		self.assertEqual(events[0]["outcome"], "denied")
+
+	def test_issue_by_officer_member_writes_scope_denied(self):
+		# An officer who is an employee of the payer company (the state that
+		# officer onboarding creates) must not be able to dispatch: the
+		# "Dispatched By" field must always hold a payer user, never the
+		# recipient. Membership alone is not enough — the provider role is.
+		before = self.event_count()
+		member_officer = self.make_user("member-officer@acme.example", [OFFICER_ROLE])
+		self.add_member(self.org, member_officer)
+		frappe.set_user(member_officer)
 		surveillance.issue_mandate(
 			facility=self.facility,
 			assigned_officer=self.officer,
