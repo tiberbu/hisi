@@ -44,9 +44,6 @@ class PatientFlowData(BaseModel):
     results: dict
     steps: list
     cr_id: str | None
-    simulation: bool
-    base_url: str
-    fetched_at: str
 
 def settings_doc():
     return frappe.get_doc("HISI Settings")
@@ -1113,9 +1110,6 @@ def parse_request(data) -> tuple:
 @api_endpoint
 def patient_flow(data: str | dict = "") -> dict:
     steps, filters = parse_request(data)
-    doc = settings_doc()
-    base_url = (doc.get("base_url") or "").strip()
-    simulation = bool(doc.get("enable_uat_simulation"))
 
     cr_id = ""
     if STEP_PATIENT in steps:
@@ -1141,8 +1135,5 @@ def patient_flow(data: str | dict = "") -> dict:
         results=results,
         steps=steps,
         cr_id=cr_id,
-        simulation=simulation,
-        base_url=base_url,
-        fetched_at=frappe.utils.now(),
     )
     return APIResponse.success(data=payload.model_dump(mode="json"))

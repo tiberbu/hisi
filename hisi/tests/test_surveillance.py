@@ -1088,7 +1088,6 @@ class TestIntegrationMockedUpstream(SurveillanceTestCase):
 		self.assertEqual(data["steps"], ["patient"])
 		self.assertEqual(data["results"]["patient"]["cr_id"], "9000001")
 		self.assertEqual(data["results"]["patient"]["name"], "Amani Otieno")
-		self.assertTrue(data["simulation"])
 
 	def test_full_journey_all_four_steps(self):
 		code = self.issue_code()
