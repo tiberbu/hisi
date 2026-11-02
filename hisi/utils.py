@@ -13,6 +13,40 @@ OFFICER_ROLE = "HISI Insurance Surveillance"
 # invites, password resets). Matches the default outgoing Email Account.
 EMAIL_SENDER = "HISI <no-reply-hisi@kenya-hie.health>"
 
+def get_outgoing_sender() -> str | None:
+	"""Sender for HISI transactional email, from the default outgoing
+	**Email Account** (display name + address) — never hardcoded.
+
+	Falls back to the site-config ``mail_login_id``, then to ``None`` so
+	Frappe's own default-account resolution applies.
+	"""
+	row = frappe.get_all(
+		"Email Account",
+		filters={"default_outgoing": 1, "enable_outgoing": 1},
+		fields=["name", "email_id"],
+		limit=1,
+	)
+	if row and row[0].email_id:
+		return f"{row[0].name} <{row[0].email_id}>"
+	login_id = frappe.conf.get("mail_login_id")
+	if login_id:
+		return str(login_id)
+	return None
+
+
+def render_email_template(name: str, args: dict | None = None) -> tuple[str, str]:
+	"""Load an **Email Template** record (editable from the Desk) and render
+	its HTML with ``args``.
+
+	The record is the single source of truth for subject and body; the
+	sender is resolved separately via :func:`get_outgoing_sender`.
+	Returns ``(subject, html)``.
+	"""
+	doc = frappe.get_doc("Email Template", name)
+	html = frappe.render_template(doc.response_html or "", args or {})
+	return ((doc.subject or "").strip() or name, html)
+
+
 def get_dha_verify_url() -> str:
 	"""DHA register base URL: HISI Settings, then site config, then environment.
 

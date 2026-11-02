@@ -139,12 +139,12 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 		# check_password raises on mismatch.
 		self.assertRaises(frappe.AuthenticationError, check_password, email, code)
 		# The styled email goes out with the code and the app sign-in link.
+		# Subject/body come from the "HISI Officer Invite" Email Template record.
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [email])
-		self.assertEqual(kw.get("template"), "officer_invite")
-		self.assertEqual(kw["args"]["code"], code)
-		self.assertEqual(kw["args"]["new_account"], 1)
-		self.assertIn("/verify-code", kw["args"]["sign_in_url"])
+		self.assertEqual(kw.get("subject"), "Your HISI invitation")
+		self.assertIn(code, kw.get("message", ""))
+		self.assertIn("/verify-code", kw.get("message", ""))
 		self.assertNotIn(code, json.dumps(frappe.local.response))
 		events = self.new_events(before)
 		self.assertEqual(len(events), 1)
@@ -168,8 +168,8 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 		self.assertEqual(invite[0]["account_created"], 0)
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [self.officer])
-		self.assertEqual(kw["args"]["code"], invite[0]["code"])
-		self.assertEqual(kw["args"]["new_account"], 0)
+		self.assertEqual(kw.get("subject"), "Your HISI invitation")
+		self.assertIn(invite[0]["code"], kw.get("message", ""))
 		# The existing password is untouched.
 		self.assertEqual(check_password(self.officer, "Existing-Pass-123"), self.officer)
 

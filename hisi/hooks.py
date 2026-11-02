@@ -169,6 +169,12 @@ scheduler_events = {
 	],
 }
 
+# Patches
+# -------
+patches = [
+	"hisi.patches.create_email_templates",
+]
+
 # Testing
 # -------
 
@@ -185,9 +191,14 @@ scheduler_events = {
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "hisi.event.get_events"
-# }
+# Route the framework's forgot-password endpoint through HISI so the reset
+# email is branded (HISI theme, sender from the default outgoing Email
+# Account, template stored as an Email Template record) and sent
+# synchronously — instead of the stock plain-text framework email from
+# "Administrator" with the "Sent via ERPNext" footer.
+override_whitelisted_methods = {
+	"frappe.core.doctype.user.user.reset_password": "hisi.api.forgot_password.reset_password",
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
