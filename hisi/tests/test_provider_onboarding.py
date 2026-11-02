@@ -135,13 +135,12 @@ class TestProviderOnboarding(SurveillanceTestCase):
 		# The code is never the account's password (a placeholder is set).
 		self.assertRaises(frappe.AuthenticationError, check_password, email, invite[0]["code"])
 		# The styled email goes out with the provider wording.
+		# Subject/body come from the "HISI Officer Invite" Email Template record.
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [email])
-		self.assertEqual(kw.get("template"), "officer_invite")
-		self.assertEqual(kw["args"]["code"], invite[0]["code"])
-		self.assertEqual(kw["args"]["new_account"], 1)
-		self.assertEqual(kw["args"]["role"], "HISI Insurance Provider")
-		self.assertIn("/verify-code", kw["args"]["sign_in_url"])
+		self.assertEqual(kw.get("subject"), "Your HISI invitation")
+		self.assertIn(invite[0]["code"], kw.get("message", ""))
+		self.assertIn("/verify-code", kw.get("message", ""))
 		events = self.new_events(before)
 		self.assertEqual(events[0]["event_type"], "provider_admin_onboarded")
 

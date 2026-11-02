@@ -19,13 +19,12 @@ from frappe.rate_limiter import rate_limit
 from frappe.utils import get_datetime, now_datetime
 
 from hisi.api.auth import link_for_app
-from hisi.utils import has_organization
+from hisi.utils import get_outgoing_sender, has_organization, render_email_template
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 CODE_RE = re.compile(r"^\d{6}$")
 CODE_TTL = timedelta(minutes=10)
 MAX_ATTEMPTS = 5
-EMAIL_SUBJECT = "Your one-time sign-in code for HISI"
 REJECT_MESSAGE = "That code did not work. Check the latest email and try again, or request a new code."
 
 
@@ -57,22 +56,29 @@ def _client_ip():
 
 
 def _send_code_email(email, first_name, code, resend):
-	"""Styled sign-in code email (complete HTML, no standard footer). A
-	resend tells the reader the earlier code was cancelled."""
+	"""Sign-in code email. Subject and body come from the ``HISI Login Code``
+	Email Template record (editable in the Desk); the sender from the default
+	outgoing Email Account. A resend tells the reader the earlier code was
+	cancelled."""
 	try:
-		frappe.sendmail(
-			recipients=[email],
-			subject=EMAIL_SUBJECT,
-			template="login_code",
-			args={
+		subject, html = render_email_template(
+			"HISI Login Code",
+			{
 				"first_name": first_name,
 				"code": code,
 				"expires_minutes": int(CODE_TTL.total_seconds() // 60),
 				"sign_in_url": link_for_app("/sign-in"),
 				"resend": 1 if resend else 0,
 			},
+		)
+		frappe.sendmail(
+			recipients=[email],
+			subject=subject,
+			sender=get_outgoing_sender(),
+			message=html,
 			raw_html=True,
 			add_unsubscribe_link=0,
+			now=True,
 		)
 	except Exception as exc:
 		frappe.log_error(message=str(exc) or repr(exc), title="Login code email failed")

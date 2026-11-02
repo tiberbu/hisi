@@ -13,13 +13,12 @@ from hisi.api.auth import link_for_app
 from hisi.api.response_handler import APIResponse, BadRequest, Conflict, Forbidden, NotFound, api_endpoint
 from hisi.api.surveillance.audit import log_event
 from hisi.api.surveillance.mandate import caller_payer_companies
-from hisi.utils import upsert_org_employee
+from hisi.utils import get_outgoing_sender, render_email_template, upsert_org_employee
 
 OFFICER_DESIGNATION = "HISI Insurance Surveillance"
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 CODE_RE = re.compile(r"^\d{6}$")
 INVITE_TTL = timedelta(days=7)
-EMAIL_SUBJECT = "Your one-time sign-in code for HISI"
 
 
 def duration_ms(start):
@@ -86,16 +85,15 @@ def _create_invite(email, company, invited_by, account_created, role=OFFICER_DES
 
 
 def _send_invite_email(email, first_name, company_name, code, sign_in_url, new_account, role=OFFICER_DESIGNATION):
-	"""Styled invite email (complete HTML, no standard footer). New accounts
-	exchange the code for a first password; existing accounts confirm the
-	company link and are signed in. The role drives the wording (officer vs
-	organization admin)."""
+	"""Invite email. Subject and body come from the ``HISI Officer Invite``
+	Email Template record (editable in the Desk); the sender from the default
+	outgoing Email Account. New accounts exchange the code for a first
+	password; existing accounts confirm the company link and are signed in.
+	The role drives the wording (officer vs organization admin)."""
 	try:
-		frappe.sendmail(
-			recipients=[email],
-			subject=EMAIL_SUBJECT,
-			template="officer_invite",
-			args={
+		subject, html = render_email_template(
+			"HISI Officer Invite",
+			{
 				"first_name": first_name,
 				"company": company_name,
 				"code": code,
@@ -103,8 +101,15 @@ def _send_invite_email(email, first_name, company_name, code, sign_in_url, new_a
 				"new_account": 1 if new_account else 0,
 				"role": role or OFFICER_DESIGNATION,
 			},
+		)
+		frappe.sendmail(
+			recipients=[email],
+			subject=subject,
+			sender=get_outgoing_sender(),
+			message=html,
 			raw_html=True,
 			add_unsubscribe_link=0,
+			now=True,
 		)
 	except Exception as exc:
 		frappe.log_error(message=str(exc) or repr(exc), title="Officer invite email failed")
