@@ -17,29 +17,7 @@ from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils.password import get_password_reset_limit
 
-from hisi.utils import get_outgoing_sender, render_email_template
-
-
-def _send_reset_email(user_doc, link: str) -> None:
-	"""Branded password-reset email. Subject/body from the Email Template
-	record; sender from the default outgoing Email Account."""
-	first_name = (user_doc.first_name or user_doc.last_name or "").strip()
-	subject, html = render_email_template(
-		"HISI Forgot Password",
-		{
-			"first_name": first_name or "there",
-			"link": link,
-		},
-	)
-	frappe.sendmail(
-		recipients=[user_doc.email],
-		sender=get_outgoing_sender(),
-		subject=subject,
-		message=html,
-		raw_html=True,
-		add_unsubscribe_link=0,
-		now=True,
-	)
+from hisi.utils import send_reset_email
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -54,7 +32,7 @@ def reset_password(user: str) -> None:
 		if user_doc.name != "Administrator" and user_doc.enabled:
 			user_doc.validate_reset_password()
 			link = user_doc._reset_password(send_email=False)
-			_send_reset_email(user_doc, link)
+			send_reset_email(user_doc, link)
 		# For Administrator or disabled users: silently skip — same response below
 	except frappe.DoesNotExistError:
 		frappe.clear_messages()

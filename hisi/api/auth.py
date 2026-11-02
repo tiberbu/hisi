@@ -9,7 +9,7 @@ from frappe.utils.oauth import get_oauth2_authorize_url
 from frappe.utils.password import get_password_reset_limit
 
 from hisi.api.response_handler import APIResponse, BadRequest, api_endpoint
-from hisi.utils import active_companies, has_organization
+from hisi.utils import active_companies, has_organization, send_reset_email
 
 MAX_DISPLAY_NAME_LENGTH = 140
 PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9\s\-()]{4,19}$")
@@ -198,7 +198,7 @@ def request_password_reset(user: str) -> dict:
 		user_doc = frappe.get_doc("User", user_name)
 		user_doc.validate_reset_password()
 		link = link_for_app(user_doc._reset_password(send_email=False))
-		user_doc.password_reset_mail(link)
+		send_reset_email(user_doc, link)
 	except frappe.DoesNotExistError:
 		frappe.clear_messages()
 	except frappe.OutgoingEmailError:
