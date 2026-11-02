@@ -289,6 +289,31 @@ def parse_eligibility(payload) -> dict:
         eligible = status.lower() in ELIGIBLE_STATUSES
     return {"eligible": eligible, "status": status, "scheme": scheme, "schemes": schemes}
 
+def patient_summary(record: dict) -> dict:
+    return {
+        "cr_id": cr_id_of(record),
+        "name": patient_name(record),
+        "gender": record.get("gender") or "",
+        "date_of_birth": record.get("date_of_birth") or "",
+        "identification_type": record.get("identification_type") or "",
+        "identification_number": record.get("identification_number") or "",
+    }
+
+def dependants_summary(patient: dict) -> list:
+    dependants = []
+    for entry in patient.get("dependants") or []:
+        if not isinstance(entry, dict):
+            continue
+        members = entry.get("result")
+        members = members if isinstance(members, list) else [entry]
+        dependants.append({
+            "relationship": entry.get("relationship") or "",
+            "date_added": entry.get("date_added") or "",
+            "total": entry.get("total") or len(members),
+            "members": [patient_summary(member) for member in members if isinstance(member, dict)],
+        })
+    return dependants
+
 def step_patient(filters: dict) -> dict:
     doc = settings_doc()
     base_url = (doc.get("base_url") or "").strip()
@@ -309,15 +334,22 @@ def step_patient(filters: dict) -> dict:
     if not patients:
         raise NotFound("No patient found for the given identifier.")
     patient = patients[0]
+    meta = patient.get("meta") or {}
+    origin = patient.get("originSystem") or {}
     return {
         "cr_id": cr_id_of(patient),
         "name": patient_name(patient),
         "gender": patient.get("gender") or "",
-        "msisdn": patient.get("msisdn") or "",
+        "msisdn": patient.get("msisdn") or patient.get("phone") or "",
         "date_of_birth": patient.get("date_of_birth") or "",
         "client_status": patient.get("client_status") or "",
         "identification_type": patient.get("identification_type") or identification_type,
         "identification_number": patient.get("identification_number") or identification_number,
+        "created": meta.get("creationTime") or "",
+        "last_updated": meta.get("lastUpdated") or "",
+        "source": meta.get("source") or "",
+        "origin_system": origin.get("system") or "",
+        "dependants": dependants_summary(patient),
     }
 
 def step_eligibility(cr_id: str, filters: dict) -> dict:
