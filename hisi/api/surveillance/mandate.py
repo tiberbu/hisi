@@ -12,7 +12,7 @@ from hisi.api.patient import http_get
 from hisi.api.surveillance.audit import log_event
 from hisi.api.surveillance.errors import MandateInvalid
 from hisi.api.surveillance.facilities import facility_search_url, parse_facility_list
-from hisi.utils import active_companies, is_company_member
+from hisi.utils import PROVIDER_ROLE, active_companies, is_company_member, is_platform_user
 
 DATA_FMT = "%Y-%m-%d %H:%M:%S"
 VERIFY_FAIL_MESSAGE = "This mandate code is not currently valid."
@@ -116,6 +116,13 @@ def issue_mandate(facility, assigned_officer, reason, scope_lines, valid_from, e
 		log_event(None, user, "scope_denied", "mandate", facility, outcome="denied", duration_ms=duration_ms(start))
 		raise Forbidden("You are not a member of a payer organization.")
 	payer_company = companies[0]
+	# Dispatching is a payer operation: the caller must hold the provider
+	# role (platform users bypass for support). Officers are company members
+	# too, so membership alone cannot gate this — without the role check an
+	# officer could dispatch and end up as their own "Dispatched By".
+	if PROVIDER_ROLE not in frappe.get_roles(user) and not is_platform_user(user):
+		log_event(None, user, "scope_denied", "mandate", facility, details={"reason": "issuer role required"}, outcome="denied", duration_ms=duration_ms(start))
+		raise Forbidden("Only payer organization users can dispatch surveillance mandates.")
 	reason = str(reason or "").strip()
 	if not reason or len(reason) > 500:
 		fail("A reason is required (up to 500 characters).")
