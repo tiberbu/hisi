@@ -27,13 +27,42 @@ CONSENT_FIELDS = [
     "requesting_system",
     "visit_id",
     "visit_request_id",
+    "creation",
+]
+CLAIM_FIELDS = [
+    "name",
+    "client",
+    "client_name",
+    "facility",
+    "creation",
+    "claim_status",
+    "interventions",
+    "interventions_code",
+    "date_start",
+    "date_end",
+    "claim_subtype",
+    "claim_amount",
+    "diagnoses_code",
+    "diagnoses",
+    "facility_name",
+    "use",
+]
+PROCEDURE_FIELDS = [
+    "name",
+    "procedure_fulfil_status",
+    "estimated_procedure_start_date",
+    "estimated_procedure_end_date",
+    "practitioner",
+    "practitioner_name",
 ]
 STEP_PATIENT = "patient"
 STEP_ELIGIBILITY = "eligibility"
 STEP_CONSENT = "consent"
 STEP_RECORDS = "records"
 STEP_CONTRIBUTIONS = "contributions"
-KNOWN_STEPS = (STEP_PATIENT, STEP_ELIGIBILITY, STEP_CONSENT, STEP_RECORDS, STEP_CONTRIBUTIONS)
+STEP_CLAIMS = "claims"
+STEP_PREAUTH = "preauth"
+KNOWN_STEPS = (STEP_PATIENT, STEP_ELIGIBILITY, STEP_CONSENT, STEP_RECORDS, STEP_CONTRIBUTIONS, STEP_CLAIMS, STEP_PREAUTH)
 REQUEST_ID_TYPES = {"CR ID": 3}
 CR_ID_KEYS = ("id","cr_id", "cr_number", "client_id", "identification_number")
 STATUS_KEYS = ("status", "eligibility_status", "scheme_status", "coverage_status")
@@ -74,6 +103,32 @@ def consent_resource_path() -> str:
     value = (settings_doc().get("fetch_patient_consent") or "").strip()
     if not value:
         raise BadRequest("HISI Settings fetch_patient_consent is not configured.")
+    return value
+
+def med_claim_search_path() -> str:
+    value = (settings_doc().get("med_claim_search") or "").strip()
+    if not value:
+        raise BadRequest("HISI Settings med_claim_search is not configured.")
+    return value
+
+def med_preauth_search_path() -> str:
+    value = (settings_doc().get("med_preauth_search") or "").strip()
+    if not value:
+        raise BadRequest("HISI Settings med_preauth_search is not configured.")
+    return value
+
+def med_preauth_procedure_search_path() -> str:
+    value = (settings_doc().get("med_preauth_procedure_search") or "").strip()
+    if not value:
+        raise BadRequest("HISI Settings med_preauth_procedure_search is not configured.")
+    return value
+
+def timeline_data_source() -> str:
+    # API for now; the Database source (direct SHR/consent/claims queries)
+    # plugs into the same steps once the connection is available.
+    value = (settings_doc().get("data_source") or "API").strip().upper()
+    if value != "API":
+        raise BadRequest("The {} data source is not available yet — set HISI Settings data source to API.".format(value.title()))
     return value
 
 def base64url_encode(raw: bytes) -> str:
@@ -1050,6 +1105,55 @@ def step_consent(cr_id: str) -> dict:
     ]
     return {"records": records}
 
+def step_claims(cr_id: str) -> dict:
+    return {"records": med_claim_records(med_claim_search_path(), cr_id)}
+
+MAX_PREAUTH_PROCEDURE_LOOKUPS = 5
+
+def step_preauth(cr_id: str) -> dict:
+    records = med_claim_records(med_preauth_search_path(), cr_id)
+    # Each preauth is enriched with its linked Procedure Records (the
+    # procedure lookup is keyed by the preauth's claim id).
+    path = med_preauth_procedure_search_path()
+    origin = (settings_doc().get("base_url") or "").strip()
+    for index, record in enumerate(records):
+        if index >= MAX_PREAUTH_PROCEDURE_LOOKUPS:
+            record["procedures"] = []
+            continue
+        claim_id = str(record.get("name") or "").strip()
+        if not claim_id:
+            record["procedures"] = []
+            continue
+        params = {
+            "filters": json.dumps([["claim_id", "=", claim_id]]),
+            "fields": json.dumps(PROCEDURE_FIELDS),
+        }
+        try:
+            record["procedures"] = [
+                item
+                for item in parse_records(http_get(join_url(origin, path), params, bearer=True))
+                if isinstance(item, dict)
+            ]
+        except UpstreamError:
+            record["procedures"] = []
+    return {"records": records}
+
+def med_claim_records(path: str, cr_id: str) -> list:
+    # Live DHA claim registry (med claims / med preauths): production
+    # origin with the usual JWT bearer, filtered to the client.
+    params = {
+        "filters": json.dumps([["client", "=", cr_id]]),
+        "fields": json.dumps(CLAIM_FIELDS),
+    }
+    origin = (settings_doc().get("base_url") or "").strip()
+    if not origin:
+        raise BadRequest("HISI Settings base_url is not configured.")
+    return [
+        record
+        for record in parse_records(http_get(join_url(origin, path), params, bearer=True))
+        if isinstance(record, dict)
+    ]
+
 def step_records(visit_id: str) -> dict:
     visit_id = str(visit_id or "").strip()
     if not visit_id:
@@ -1100,12 +1204,12 @@ def parse_request(data) -> tuple:
     if not isinstance(filters, dict):
         raise BadRequest("filters must be an object.")
     if not isinstance(steps, list) or not steps:
-        raise BadRequest("steps must be a non-empty list of: patient, eligibility, consent, records, contributions.")
+        raise BadRequest("steps must be a non-empty list of: patient, eligibility, consent, records, contributions, claims, preauth.")
     cleaned = []
     for step in steps:
         step = str(step).strip().lower()
         if step not in KNOWN_STEPS:
-            raise BadRequest("Unknown step {}; allowed steps: patient, eligibility, consent, records, contributions.".format(step))
+            raise BadRequest("Unknown step {}; allowed steps: patient, eligibility, consent, records, contributions, claims, preauth.".format(step))
         if step not in cleaned:
             cleaned.append(step)
     return cleaned, filters
@@ -1232,6 +1336,7 @@ def fetch_patient_contributions(cr_id: str) -> dict:
 @api_endpoint
 def patient_flow(data: str | dict = "") -> dict:
     steps, filters = parse_request(data)
+    timeline_data_source()
 
     cr_id = ""
     if STEP_PATIENT in steps:
@@ -1242,7 +1347,7 @@ def patient_flow(data: str | dict = "") -> dict:
         results = {STEP_PATIENT: result}
     else:
         cr_id = str(filters.get("cr_id") or filters.get("client") or "").strip()
-        if not cr_id and any(step in steps for step in (STEP_ELIGIBILITY, STEP_CONSENT, STEP_CONTRIBUTIONS)):
+        if not cr_id and any(step in steps for step in (STEP_ELIGIBILITY, STEP_CONSENT, STEP_CONTRIBUTIONS, STEP_CLAIMS, STEP_PREAUTH)):
             raise BadRequest("A cr_id filter is required when the patient step is not included.")
         results = {}
 
@@ -1252,6 +1357,10 @@ def patient_flow(data: str | dict = "") -> dict:
         results[STEP_CONSENT] = step_consent(cr_id)
     if STEP_CONTRIBUTIONS in steps:
         results[STEP_CONTRIBUTIONS] = fetch_patient_contributions(cr_id)
+    if STEP_CLAIMS in steps:
+        results[STEP_CLAIMS] = step_claims(cr_id)
+    if STEP_PREAUTH in steps:
+        results[STEP_PREAUTH] = step_preauth(cr_id)
     if STEP_RECORDS in steps:
         results[STEP_RECORDS] = step_records_multi(filters, results)
 
