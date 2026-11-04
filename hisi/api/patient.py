@@ -66,6 +66,10 @@ def jwt_ttl_seconds() -> int:
     value = settings_doc().get("jwt_ttl_s")
     return int(value) if value else DEFAULT_JWT_TTL_SECONDS
 
+def empty_payload_hash() -> str:
+    value = (settings_doc().get("empty_payload_sha256") or "").strip()
+    return value or EMPTY_PAYLOAD_SHA256
+
 def consent_resource_path() -> str:
     value = (settings_doc().get("fetch_patient_consent") or "").strip()
     if not value:
@@ -148,7 +152,7 @@ def sigv4_headers(method: str, host: str, path: str, canonical_query: str, acces
         canonical_query,
         "host:{}\nx-amz-date:{}\n".format(host, amz_date),
         "host;x-amz-date",
-        EMPTY_PAYLOAD_SHA256,
+        empty_payload_hash(),
     ])
     scope = "{}/{}/{}/aws4_request".format(date, region, AWS_SERVICE)
     string_to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()])
@@ -1029,12 +1033,22 @@ def step_consent(cr_id: str) -> dict:
         "filters": json.dumps([["client", "=", cr_id]]),
         "fields": json.dumps(CONSENT_FIELDS),
     }
+    doc = settings_doc()
+    if doc.get("enable_uat_simulation"):
+        # Simulation mode: the UAT CMP accepts the call unauthenticated.
+        origin, bearer = simulation_base_url(), False
+    else:
+        origin = (doc.get("base_url") or "").strip()
+        if not origin:
+            raise BadRequest("HISI Settings base_url is not configured.")
+        # Production DHA origin: the usual JWT bearer applies.
+        bearer = True
     records = [
         record
-        for record in parse_records(http_get(join_url(simulation_base_url(), consent_resource_path()), params, bearer=False))
+        for record in parse_records(http_get(join_url(origin, consent_resource_path()), params, bearer=bearer))
         if isinstance(record, dict) and str(record.get("visit_id") or "").strip()
     ]
-    return {"records": records, "base_url": simulation_base_url()}
+    return {"records": records}
 
 def step_records(visit_id: str) -> dict:
     visit_id = str(visit_id or "").strip()

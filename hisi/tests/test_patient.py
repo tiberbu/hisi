@@ -162,7 +162,7 @@ class TestPatientFlow(IntegrationTestCase):
         self.assertEqual(data["results"]["eligibility"]["scheme"], "SHIF")
         self.assertEqual(len(data["results"]["consent"]["records"]), 1)
         self.assertEqual(data["results"]["consent"]["records"][0]["consent_status"], "Approved")
-        self.assertEqual(data["results"]["consent"]["base_url"], "https://uat.dha.go.ke")
+        self.assertNotIn("base_url", data["results"]["consent"])
 
     def test_jwt_matches_dha_contract(self):
         with patch.object(patient.requests, "get", return_value=http_response(patient_payload())) as mock_get:
@@ -365,9 +365,23 @@ class TestPatientFlow(IntegrationTestCase):
 
     def test_simulation_prefers_uat_base_url_setting(self):
         self.set_settings(uat_base_url="https://uat2.dha.go.ke")
-        with patch.object(patient.requests, "get", return_value=http_response(consent_payload())):
+        with patch.object(patient.requests, "get", return_value=http_response(consent_payload())) as mock_get:
             self.run_flow(["consent"], {"cr_id": "CR1"})
-        self.assertEqual(frappe.local.response.get("data")["results"]["consent"]["base_url"], "https://uat2.dha.go.ke")
+        # The consent call goes to the configured UAT origin, unauthenticated;
+        # the origin is no longer echoed in the response.
+        self.assertTrue(mock_get.call_args.args[0].startswith("https://uat2.dha.go.ke"))
+        self.assertNotIn("Authorization", mock_get.call_args.kwargs["headers"])
+        self.assertNotIn("base_url", frappe.local.response.get("data")["results"]["consent"])
+
+    def test_consent_without_simulation_uses_base_url_with_jwt(self):
+        self.set_settings(enable_uat_simulation=0)
+        with patch.object(patient.requests, "get", return_value=http_response(consent_payload())) as mock_get:
+            self.run_flow(["consent"], {"cr_id": "CR1"})
+        # With simulation off, consent runs against the production origin with
+        # the usual JWT bearer.
+        self.assertEqual(mock_get.call_args.args[0], "https://api.dha.go.ke/v1/cmp/resource/Visit Consent")
+        self.assertTrue(mock_get.call_args.kwargs["headers"]["Authorization"].startswith("Bearer "))
+        self.assertNotIn("base_url", frappe.local.response.get("data")["results"]["consent"])
 
     def test_upstream_http_error(self):
         with patch.object(patient.requests, "get", return_value=http_response(None, status_code=502)):

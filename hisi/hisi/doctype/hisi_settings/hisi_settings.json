@@ -32,6 +32,7 @@
   "aws_secret_key",
   "aws_region",
   "query_mapper",
+  "empty_payload_sha256",
   "surveillance_tab",
   "surveillance_session_ttl_minutes",
   "surveillance_idle_timeout_minutes",
@@ -170,6 +171,12 @@
    "fieldtype": "Table",
    "label": "Query Mapper",
    "options": "SHR Query Mapping"
+  },
+  {
+   "default": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "fieldname": "empty_payload_sha256",
+   "fieldtype": "Data",
+   "label": "Empty Payload SHA256"
   },
   {
    "fieldname": "surveillance_tab",
