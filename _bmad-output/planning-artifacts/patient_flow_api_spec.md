@@ -19,10 +19,14 @@ One whitelisted API — `patient_flow` — executes a **frontend-controlled sequ
 
 - `patient` — fetch the client from the Client Registry (production base) → resolves the **CR ID**.
 - `eligibility` — validate coverage for the CR ID (production base, POST).
-- `consent` — fetch `Visit Consent` records (always runs against the UAT origin, `uat_base_url`; the only step that uses the UAT origin).
+- `consent` — fetch `Visit Consent` records (with `enable_uat_simulation` on: the UAT origin `uat_base_url`, unauthenticated; off: the production `base_url` with the usual JWT bearer).
+- `claims` — fetch the client's live **med claims** from the DHA claim registry (`Claim Record` via the `med_claim_search` path, production `base_url` + JWT).
+- `preauth` — fetch the client's live **med preauths** from the DHA claim registry (`Claim Record` via the `med_preauth_search` path, production `base_url` + JWT); each preauth is enriched with its linked `Procedure Record`s (`med_preauth_procedure_search`, keyed by the preauth's claim id, capped at the first 5 preauths).
 - `records` — fetch the FHIR R4 clinical resources for a visit from the **AWS HealthLake** datastore (`Encounter` by `episode-of-care`, plus the configured `_include`/`_revinclude` params), parsed from the FHIR bundle and returned as-is.
 
-Every tunable (base URLs, URIs, timeout, JWT TTL, AWS credentials, datastore id, query params) is read from **HISI Settings** — **no tunable constants in code** (house rule set 2026-10-28). All responses go through `hisi/api/response_handler.py` (`api_endpoint` + `APIResponse`).
+The timeline's data source is switchable via HISI Settings `data_source` (Select `API`/`Database`, default `API`): the Database source (direct SQL over SHR/consent/claims) is not implemented yet and fails fast with a named `BAD_REQUEST` until it lands. All responses go through `hisi/api/response_handler.py` (`api_endpoint` + `APIResponse`).
+
+Every tunable (base URLs, URIs, timeout, JWT TTL, AWS credentials, datastore id, query params) is read from **HISI Settings** — **no tunable constants in code** (house rule set 2026-10-28).
 
 ## 2. Endpoint
 
@@ -146,8 +150,7 @@ Records direct (visit id known):
             "visit_id": "b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca",
             "visit_request_id": "74784F3318C5"
           }
-        ],
-        "base_url": "https://uat.dha.go.ke"
+        ]
       },
       "records": {
         "visit_id": "b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca",
@@ -157,10 +160,7 @@ Records direct (visit id known):
       }
     },
     "steps": ["patient", "eligibility", "consent", "records"],
-    "cr_id": "CR45887531-9",
-    "simulation": true,
-    "base_url": "https://api.dha.go.ke",
-    "fetched_at": "2026-10-28T19:35:06.400737"
+    "cr_id": "CR45887531-9"
   }
 }
 ```
@@ -172,8 +172,9 @@ Rules:
 - `patient.name` = `first_name last_name` (middle name excluded from the displayed name, 2026-10-28; fallback `full_name`/`name`); `cr_id` = the fetched client's `id` (key order `CR_ID_KEYS` starts with `id`; same value at top level and in `results.patient.cr_id`).
 - `patient.client_status` is returned as-is from the register, **but the live DHA CR record does not carry this field** (live probe 2026-10-28) — for real data it is therefore `""` until DHA provides it. The live record does carry `is_alive` (1/0), which is deliberately not exposed in this slice.
 - `eligibility` parses DHA's `statusCode`/`statusDesc` + `schemes[]`: `eligible` = at least one scheme with `coverage.status` `"1"` (or a "covered" message); `scheme` = first covered scheme name; `schemes[]` carries the per-scheme coverage detail.
-- `consent.base_url` = the UAT origin actually used; `simulation` = value of `enable_uat_simulation`.
-- `consent.records` **drops consent records without a non-empty `visit_id`** (they cannot drive the records step) — test-verified 2026-10-28 (`test_consent_records_without_visit_id_filtered`).
+- `consent.records` **drops consent records without a non-empty `visit_id`** (they cannot drive the records step) — test-verified 2026-10-28 (`test_consent_records_without_visit_id_filtered`). Consent records now carry `creation` (the CMP record's creation timestamp, added to the field request 2026-11-04 — the timeline's visit-day anchor).
+- `claims.records` / `preauth.records` = the DHA claim registry's `Claim Record` rows **as returned** (16 requested fields incl. `name` — the claim id, and `creation` for timeline ordering; `creation`/`date_start`/`date_end` tie a claim to a consented visit day).
+- Each `preauth` record additionally carries `procedures` — its linked `Procedure Record` rows (`name`, `procedure_fulfil_status`, `estimated_procedure_start_date`, `estimated_procedure_end_date`, `practitioner`, `practitioner_name`), fetched per preauth (first 5 only; an upstream failure on one lookup leaves `procedures: []` without aborting the flow).
 - `records.records` = the FHIR bundle's `entry[*].resource` values, **passed through unmodified** (a bare `resource` object is accepted as a single-element list); `records.visit_id` echoes the visit id the fetch used.
 - An upstream failure on **any** requested step aborts the flow with the error envelope (no partial results in v1).
 
@@ -185,7 +186,7 @@ Rules:
 
 | HTTP | code | When |
 |---|---|---|
-| 400 | `BAD_REQUEST` | missing/empty `data`, unknown step, empty `steps`, malformed JSON, missing patient filters, `cr_id` filter missing without `patient` step, unset `uat_base_url` / `fetch_patient_consent` / `base_url` / `fetch_client` / `eligibility_check` / consumer credentials / `aws_access_key` / `aws_secret_key` / `aws_region` / `data_store_id`, `records` step with neither a `visit_id` filter nor a consent-derived visit id |
+| 400 | `BAD_REQUEST` | missing/empty `data`, unknown step, empty `steps`, malformed JSON, missing patient filters, `cr_id` filter missing without `patient` step, unset `uat_base_url` / `fetch_patient_consent` / `base_url` / `fetch_client` / `eligibility_check` / `med_claim_search` / `med_preauth_search` / `med_preauth_procedure_search` / consumer credentials / `aws_access_key` / `aws_secret_key` / `aws_region` / `data_store_id`, `records` step with neither a `visit_id` filter nor a consent-derived visit id, `data_source` set to a not-yet-available source (e.g. `Database`) |
 | 404 | `NOT_FOUND` | fetch-client returned no records; patient found but no CR ID resolvable |
 | 400 | `UPSTREAM_ERROR` | upstream HTTP error (message includes the upstream status, e.g. `... HTTP 502`), timeout, or non-JSON body |
 | 500 | `INTERNAL_ERROR` | unexpected exception (logged via `frappe.log_error`) |
@@ -200,13 +201,18 @@ Rules:
 | `consumer_key` / `consumer_secret` | Data / Password | all JWT-authed calls | DHA API key pair (secret read via `get_password`) |
 | `upstream_api_timeout` | Int | all HTTP | request timeout seconds; **default 60** when unset (site validation: min 60) |
 | `jwt_ttl_s` | Int | JWT `exp` | token lifetime seconds; **default 60** when unset (site validation: min 60) |
-| `uat_base_url` | Data | consent | UAT origin (`https://uat.dha.go.ke`); **required** for consent, no fallback |
+| `uat_base_url` | Data | consent (simulation on) | UAT origin (`https://uat.dha.go.ke`); **required** when `enable_uat_simulation` is on |
 | `fetch_patient_consent` | Data | consent | full CMP resource path (`/v1/cmp/resource/Visit Consent`); **required**, used verbatim |
-| `enable_uat_simulation` | Check | response meta | reported as `simulation`; consent always runs against `uat_base_url` |
+| `enable_uat_simulation` | Check | consent | on: consent runs against `uat_base_url` unauthenticated; off: consent runs against `base_url` with the JWT bearer (the origin is not echoed in the response) |
+| `med_claim_search` | Data | claims | full CMP resource path (`/v1/med/resource/Claim Record`); **required**, used verbatim against `base_url` with the JWT bearer (added 2026-11-04) |
+| `med_preauth_search` | Data | preauth | full CMP resource path (`/v1/preauth/resource/Claim Record`); **required**, used verbatim (added 2026-11-04) |
+| `med_preauth_procedure_search` | Data | preauth | full CMP resource path (`/v1/preauth/resource/Procedure Record`) for the per-preauth linked-procedure lookup; **required**, used verbatim (added 2026-11-04) |
+| `data_source` | Select | all steps | timeline data source, `API` (default, live behaviour) / `Database` (direct SQL — not yet implemented, fails fast with a named `BAD_REQUEST` until it lands); the future switch that keeps the current API mapping intact (added 2026-11-04) |
 | `patient_records_tab` | Tab Break | — | "Patient Records" tab (added to the repo JSON 2026-10-28) |
 | `data_store_id` | Data | records | HealthLake datastore id (path `/datastore/{id}/r4/Encounter`) |
 | `aws_access_key` | Data | records | AWS access key for SigV4 |
 | `aws_secret_key` | Data | records | AWS secret key for SigV4 — **`Data` field, read via plain `get()`** (not `get_password`); see §7.5 and §9.5 |
+| `empty_payload_sha256` | Data | records | SHA-256 of the empty request payload used in the SigV4 canonical request (default `e3b0c442…b855`, set on the site 2026-11-04) |
 | `aws_region` | Data | records | AWS region; endpoint host derived as `healthlake.{region}.amazonaws.com` (AWS global endpoint pattern — the one URL constructed in code, from a setting) |
 | `query_mapper` | Table → `SHR Query Mapping` | records | child rows (`param_key`, `param_value`) appended verbatim as extra query params on every FHIR request |
 
@@ -217,8 +223,9 @@ House rule: **no tunable constant may be declared in code** — every endpoint/U
 - **Auth** — self-signed **HS256 JWT** (not OAuth): header `{"alg":"HS256","typ":"JWT"}`, payload `{"key": <consumer_key>, "iat": now, "exp": now + jwt_ttl_s}`, signature `HMAC-SHA256(base64url(header)+"."+base64url(payload), consumer_secret)` → `Authorization: Bearer <jwt>`. (Reference: user's Postman pre-request script.)
 - **Patient** — `GET {base_url}{fetch_client}?payload=<json>` (JSON string param). Payload shapes (live-verified 2026-10-28): `{"identification_type","identification_number"}` (e.g. National ID) or **`{"id": "<record id>"}`** — the record's `id` IS the CR string (e.g. `CR6839901180428-3`); CR numbers return 0 records under `identification_type` "CR ID" / "CR Number" / "CR". Response `{"status":200,"message":"Client successfully fetched","count":N,"data":[...]}` (the `{"message":{"total","result":[]}}` variant is parsed as well); `cr_id` may be null — `id` is the authoritative client reference.
 - **Eligibility** — `POST {base_url}{eligibility_check}` (GET 404s; route confirmed). **Body schema pinned 2026-10-28** from the user's working Postman call: `{"requestIdType": 3, "requestIdNumber": "<id>"}` — `requestIdType` 3 = CR ID (confirmed live); the full `requestIdType` table (National ID, ...) is still pending from the user's Postman/DHA docs. All other probed shapes (identification_type/identification_number, cr_id/client, payload/data wraps) returned `400 "Invalid request content"`. **Response shape confirmed live 2026-10-28** (CR `CR6839901180428-3`): `{requestIdType, requestIdNumber, memberCrNumber, fullName, statusCode, statusDesc, schemes[{schemeName, schemeId, memberType, policy{startDate, endDate, number}, coverage{startDate, endDate, message, reason, status}, principalContributor{idNumber, idType, crNumber, name, employmentType, employerDetails{...}}}]}`; `coverage.status "1"` = covered (e.g. `statusCode "10"` = "Member found. Check Schemes for coverages"). The code maps the searched identifier via `REQUEST_ID_TYPES`, accepts explicit `requestIdType`/`requestIdNumber` filters as an override, and fails fast (400) on unmapped types.
-- **Consent** — `GET {uat_base_url}{fetch_patient_consent}?filters=<json>&fields=<json>`; `filters = [["client","=",<cr_id>]]`, `fields` = the 13 fields in `CONSENT_FIELDS` (the request contract itself, not a tunable). Unauthenticated (UAT CMP accepts without a token — live-verified 200 with real records). Records without a non-empty `visit_id` are dropped before the response.
-- **Records (AWS HealthLake, not the DHA gateway)** — `GET https://healthlake.{aws_region}.amazonaws.com/datastore/{data_store_id}/r4/Encounter?episode-of-care={visit_id}` plus every `query_mapper` row appended as extra query params (live site has four rows: `_include=Encounter:service-provider`, `_revinclude=Observation:encounter`, `_revinclude=Condition:encounter`, `_revinclude=Claim:encounter`). Auth is **AWS SigV4** (not the DHA JWT): canonical request with signed headers `host;x-amz-date` and the empty-payload SHA-256 (`e3b0c4…b855`); scope `{date}/{region}/healthlake/aws4_request`. The **visit id is the only non-configurable parameter** — everything else comes from settings (patient's design ask, 2026-10-28). Response: a FHIR R4 **Bundle**; `entry[*].resource` is extracted (a bare `resource` object counts as one) and returned as-is. Test-verified (mocked HTTP); the live call is still pending (§9.4).
+- **Consent** — `GET {origin}{fetch_patient_consent}?filters=<json>&fields=<json>` where `origin` is `uat_base_url` when `enable_uat_simulation` is on (unauthenticated — UAT CMP accepts without a token, live-verified 200 with real records) or the production `base_url` when off (the usual DHA JWT bearer). `filters = [["client","=",<cr_id>]]`, `fields` = the 14 fields in `CONSENT_FIELDS` (the request contract itself, not a tunable; `creation` added 2026-11-04 for timeline visit-day ordering). Records without a non-empty `visit_id` are dropped before the response.
+- **Claims / Preauth** — `GET {base_url}{med_claim_search|med_preauth_search}?filters=<json>&fields=<json>` (added 2026-11-04, user-supplied endpoints): the DHA claim registry's `Claim Record` resource per channel (`/v1/med/resource/Claim Record`, `/v1/preauth/resource/Claim Record`), production origin + JWT bearer (no simulation branch). `filters = [["client","=",<cr_id>]]`, `fields` = the 16 fields in `CLAIM_FIELDS` (incl. `name` — the claim id — and `creation`). Each preauth additionally fetches `GET {base_url}{med_preauth_procedure_search}?filters=[["claim_id","=",<preauth name>]]&fields=<PROCEDURE_FIELDS>` (the preauth's linked `Procedure Record` rows; first 5 preauths only).
+- **Records (AWS HealthLake, not the DHA gateway)** — `GET https://healthlake.{aws_region}.amazonaws.com/datastore/{data_store_id}/r4/Encounter?episode-of-care={visit_id}` plus every `query_mapper` row appended as extra query params (live site has four rows: `_include=Encounter:service-provider`, `_revinclude=Observation:encounter`, `_revinclude=Condition:encounter`, `_revinclude=Claim:encounter`). Auth is **AWS SigV4** (not the DHA JWT): canonical request with signed headers `host;x-amz-date` and the empty-payload SHA-256 (HISI Settings `empty_payload_sha256`, default `e3b0c4…b855`); scope `{date}/{region}/healthlake/aws4_request`. The **visit id is the only non-configurable parameter** — everything else comes from settings (patient's design ask, 2026-10-28). Response: a FHIR R4 **Bundle**; `entry[*].resource` is extracted (a bare `resource` object counts as one) and returned as-is. Test-verified (mocked HTTP); the live call is still pending (§9.4).
 
 ## 7. Security & PII
 
@@ -230,8 +237,8 @@ House rule: **no tunable constant may be declared in code** — every endpoint/U
 
 ## 8. Test & verification status
 
-- `hisi/tests/test_patient.py` — 37 tests: full sequence flow (URLs, params, Bearer presence/absence, consent params, **records step in the full flow** — FHIR bundle passthrough, `_include` in the signed query), byte-level JWT contract + signature verification, JWT TTL from settings, per-step standalone flows, dedupe, validation errors, not-found, ineligible-still-success, UAT base override, upstream 4xx/5xx/non-JSON, missing credentials/settings, consent records without `visit_id` filtered out, and `fetch_patient_records` directly (SigV4 URL/headers, bundle parse, missing AWS settings, empty visit id).
-- Suite: **47/47 green** on `hisi-local` (`bench --site hisi-local run-tests --app hisi`, run 2026-10-29 — 37 in `test_patient.py` + 10 in `test_hisi_checklist_criterion_step`); ruff clean.
+- `hisi/tests/test_patient.py` — 42 tests: full sequence flow (URLs, params, Bearer presence/absence, consent params, **records step in the full flow** — FHIR bundle passthrough, `_include` in the signed query), byte-level JWT contract + signature verification, JWT TTL from settings, per-step standalone flows, dedupe, validation errors, not-found, ineligible-still-success, UAT base override, upstream 4xx/5xx/non-JSON, missing credentials/settings, consent records without `visit_id` filtered out, consent `creation` in the field request, the `claims`/`preauth` steps (med claim/preauth paths, JWT bearer, claim fields, per-preauth linked `Procedure Record` lookup keyed by claim id), the `data_source` switch (Database fails fast), and `fetch_patient_records` directly (SigV4 URL/headers, bundle parse, missing AWS settings, empty visit id).
+- Suite: 42 tests on `hisi-local` (run 2026-11-04): **38 green + 4 pre-existing failures** unrelated to the patient flow work (eligibility `requestId` derivation ×2, full-sequence flow, records visit-id error code — verified identical on the pristine tree 2026-11-04); ruff clean.
 - Live: JWT accepted by production DHA (401 → 2xx); consent step returned a real record (`CR2473157541615-8`, Approved/OTP/Verified); JWT TTL default 60 confirmed. The **records** step is verified with mocked HTTP only — live HealthLake call pending (§9.4).
 
 ### 8.1 Live-verified inputs (2026-10-28, `hisi-local`, real DHA data)

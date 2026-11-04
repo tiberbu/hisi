@@ -63,6 +63,32 @@ def consent_payload():
                 "requesting_system": "HALCYON HEALTHCARE LIMITED",
                 "visit_id": "b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca",
                 "visit_request_id": "74784F3318C5",
+                "creation": "2026-10-28 19:02:11",
+            }
+        ]
+    }
+
+
+def claim_payload():
+    return {
+        "data": [
+            {
+                "name": "59f53f79-b25f-4994-8e40-4a94bf1cf667",
+                "client": "CR2473157541615-8",
+                "client_name": "Jane Aoko Doe",
+                "facility": "FID-47-105963-0",
+                "creation": "2026-10-28 19:02:11",
+                "claim_status": "Paid",
+                "interventions": ["Consultation", "Lab tests"],
+                "interventions_code": ["A01", "B02"],
+                "date_start": "2026-10-28",
+                "date_end": "2026-10-29",
+                "claim_subtype": "Inpatient",
+                "claim_amount": "KES 134,400",
+                "diagnoses_code": "A1B.C",
+                "diagnoses": "Pneumonia",
+                "facility_name": "Halcyon Hospital",
+                "use": "inpatient",
             }
         ]
     }
@@ -116,6 +142,7 @@ class TestPatientFlow(IntegrationTestCase):
             jwt_ttl_s=60,
             uat_base_url="https://uat.dha.go.ke",
             enable_uat_simulation=1,
+            data_source="API",
         )
 
     def run_flow(self, steps, filters=None):
@@ -162,7 +189,7 @@ class TestPatientFlow(IntegrationTestCase):
         self.assertEqual(data["results"]["eligibility"]["scheme"], "SHIF")
         self.assertEqual(len(data["results"]["consent"]["records"]), 1)
         self.assertEqual(data["results"]["consent"]["records"][0]["consent_status"], "Approved")
-        self.assertEqual(data["results"]["consent"]["base_url"], "https://uat.dha.go.ke")
+        self.assertNotIn("base_url", data["results"]["consent"])
 
     def test_jwt_matches_dha_contract(self):
         with patch.object(patient.requests, "get", return_value=http_response(patient_payload())) as mock_get:
@@ -365,9 +392,89 @@ class TestPatientFlow(IntegrationTestCase):
 
     def test_simulation_prefers_uat_base_url_setting(self):
         self.set_settings(uat_base_url="https://uat2.dha.go.ke")
-        with patch.object(patient.requests, "get", return_value=http_response(consent_payload())):
+        with patch.object(patient.requests, "get", return_value=http_response(consent_payload())) as mock_get:
             self.run_flow(["consent"], {"cr_id": "CR1"})
-        self.assertEqual(frappe.local.response.get("data")["results"]["consent"]["base_url"], "https://uat2.dha.go.ke")
+        # The consent call goes to the configured UAT origin, unauthenticated;
+        # the origin is no longer echoed in the response.
+        self.assertTrue(mock_get.call_args.args[0].startswith("https://uat2.dha.go.ke"))
+        self.assertNotIn("Authorization", mock_get.call_args.kwargs["headers"])
+        self.assertNotIn("base_url", frappe.local.response.get("data")["results"]["consent"])
+
+    def test_consent_without_simulation_uses_base_url_with_jwt(self):
+        self.set_settings(enable_uat_simulation=0)
+        with patch.object(patient.requests, "get", return_value=http_response(consent_payload())) as mock_get:
+            self.run_flow(["consent"], {"cr_id": "CR1"})
+        # With simulation off, consent runs against the production origin with
+        # the usual JWT bearer.
+        self.assertEqual(mock_get.call_args.args[0], "https://api.dha.go.ke/v1/cmp/resource/Visit Consent")
+        self.assertTrue(mock_get.call_args.kwargs["headers"]["Authorization"].startswith("Bearer "))
+        self.assertNotIn("base_url", frappe.local.response.get("data")["results"]["consent"])
+
+    def test_consent_fields_include_creation(self):
+        with patch.object(patient.requests, "get", return_value=http_response(consent_payload())) as mock_get:
+            self.run_flow(["consent"], {"cr_id": "CR1"})
+        self.assertIn("creation", json.loads(mock_get.call_args.kwargs["params"]["fields"]))
+
+    def test_claims_step_uses_med_claim_search_with_jwt(self):
+        with patch.object(patient.requests, "get", return_value=http_response(claim_payload())) as mock_get:
+            self.run_flow(["claims"], {"cr_id": "CR1"})
+        call = mock_get.call_args
+        # The claims step always runs against the production origin with the
+        # JWT bearer (no UAT simulation), on the configured med claim path.
+        self.assertEqual(call.args[0], "https://api.dha.go.ke/v1/med/resource/Claim Record")
+        self.assertEqual(json.loads(call.kwargs["params"]["filters"]), [["client", "=", "CR1"]])
+        self.assertEqual(json.loads(call.kwargs["params"]["fields"]), patient.CLAIM_FIELDS)
+        self.assertTrue(call.kwargs["headers"]["Authorization"].startswith("Bearer "))
+        records = frappe.local.response.get("data")["results"]["claims"]["records"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["claim_status"], "Paid")
+
+    def test_preauth_step_uses_med_preauth_search_with_jwt(self):
+        with patch.object(patient.requests, "get", side_effect=[http_response(claim_payload()), http_response({"data": []})]) as mock_get:
+            self.run_flow(["preauth"], {"cr_id": "CR1"})
+        call = mock_get.call_args_list[0]
+        self.assertEqual(call.args[0], "https://api.dha.go.ke/v1/preauth/resource/Claim Record")
+        self.assertEqual(json.loads(call.kwargs["params"]["filters"]), [["client", "=", "CR1"]])
+        self.assertTrue(call.kwargs["headers"]["Authorization"].startswith("Bearer "))
+        records = frappe.local.response.get("data")["results"]["preauth"]["records"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["procedures"], [])
+
+    def test_preauth_records_include_linked_procedures(self):
+        procedures = http_response(
+            {
+                "data": [
+                    {
+                        "name": "59f53f79-proc-1",
+                        "procedure_fulfil_status": "Scheduled",
+                        "estimated_procedure_start_date": "2026-11-02",
+                        "estimated_procedure_end_date": "2026-11-03",
+                        "practitioner": "FID-47-105963-0",
+                        "practitioner_name": "Dr. Aoko",
+                    }
+                ]
+            }
+        )
+        with patch.object(patient.requests, "get", side_effect=[http_response(claim_payload()), procedures]) as mock_get:
+            self.run_flow(["preauth"], {"cr_id": "CR1"})
+        procedure_call = mock_get.call_args_list[1]
+        # The procedure lookup targets the configured preauth procedure path,
+        # keyed by the preauth record's claim id (its document name).
+        self.assertEqual(procedure_call.args[0], "https://api.dha.go.ke/v1/preauth/resource/Procedure Record")
+        self.assertEqual(json.loads(procedure_call.kwargs["params"]["filters"]), [["claim_id", "=", "59f53f79-b25f-4994-8e40-4a94bf1cf667"]])
+        self.assertEqual(json.loads(procedure_call.kwargs["params"]["fields"]), patient.PROCEDURE_FIELDS)
+        record = frappe.local.response.get("data")["results"]["preauth"]["records"][0]
+        self.assertEqual(len(record["procedures"]), 1)
+        self.assertEqual(record["procedures"][0]["procedure_fulfil_status"], "Scheduled")
+        self.assertEqual(record["procedures"][0]["practitioner_name"], "Dr. Aoko")
+
+    def test_database_data_source_not_available_yet(self):
+        self.set_settings(data_source="Database")
+        self.run_flow(["claims"], {"cr_id": "CR1"})
+        response = frappe.local.response
+        self.assertEqual(response.get("status"), "error")
+        self.assertEqual(response.get("code"), "BAD_REQUEST")
+        self.assertIn("data source", response.get("message").lower())
 
     def test_upstream_http_error(self):
         with patch.object(patient.requests, "get", return_value=http_response(None, status_code=502)):

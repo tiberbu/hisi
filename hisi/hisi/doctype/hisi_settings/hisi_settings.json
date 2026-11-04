@@ -15,8 +15,12 @@
   "fetch_practitioner",
   "fetch_facility",
   "eligibility_check",
+  "med_claim_search",
+  "med_preauth_search",
+  "med_preauth_procedure_search",
   "upstream_api_timeout",
   "jwt_ttl_s",
+  "data_source",
   "eligibility_and_coverage_tab",
   "fs_base_url",
   "fs_auth",
@@ -32,6 +36,7 @@
   "aws_secret_key",
   "aws_region",
   "query_mapper",
+  "empty_payload_sha256",
   "surveillance_tab",
   "surveillance_session_ttl_minutes",
   "surveillance_idle_timeout_minutes",
@@ -172,6 +177,12 @@
    "options": "SHR Query Mapping"
   },
   {
+   "default": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "fieldname": "empty_payload_sha256",
+   "fieldtype": "Data",
+   "label": "Empty Payload SHA256"
+  },
+  {
    "fieldname": "surveillance_tab",
    "fieldtype": "Tab Break",
    "label": "Surveillance"
@@ -238,11 +249,36 @@
    "fieldname": "fs_auth",
    "fieldtype": "Data",
    "label": "FS Auth"
+  },
+  {
+   "default": "/v1/med/resource/Claim Record",
+   "fieldname": "med_claim_search",
+   "fieldtype": "Data",
+   "label": "Med Claim Search"
+  },
+  {
+   "default": "/v1/preauth/resource/Claim Record",
+   "fieldname": "med_preauth_search",
+   "fieldtype": "Data",
+   "label": "Med Preauth Search"
+  },
+  {
+   "default": "/v1/preauth/resource/Procedure Record",
+   "fieldname": "med_preauth_procedure_search",
+   "fieldtype": "Data",
+   "label": "Med Preauth Procedure Search"
+  },
+  {
+   "default": "API",
+   "fieldname": "data_source",
+   "fieldtype": "Select",
+   "label": "Timeline Data Source",
+   "options": "API\nDatabase"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-04 12:58:35.252501",
+ "modified": "2026-11-04 21:21:01.077418",
  "modified_by": "Administrator",
  "module": "Hisi",
  "name": "HISI Settings",
