@@ -32,7 +32,8 @@ STEP_PATIENT = "patient"
 STEP_ELIGIBILITY = "eligibility"
 STEP_CONSENT = "consent"
 STEP_RECORDS = "records"
-KNOWN_STEPS = (STEP_PATIENT, STEP_ELIGIBILITY, STEP_CONSENT, STEP_RECORDS)
+STEP_CONTRIBUTIONS = "contributions"
+KNOWN_STEPS = (STEP_PATIENT, STEP_ELIGIBILITY, STEP_CONSENT, STEP_RECORDS, STEP_CONTRIBUTIONS)
 REQUEST_ID_TYPES = {"CR ID": 3}
 CR_ID_KEYS = ("id","cr_id", "cr_number", "client_id", "identification_number")
 STATUS_KEYS = ("status", "eligibility_status", "scheme_status", "coverage_status")
@@ -190,17 +191,6 @@ def parse_fhir_bundle(payload) -> list:
             return records
     resource = payload.get("resource")
     return [resource] if isinstance(resource, dict) else []
-
-# ---------------------------------------------------------------------------
-# FHIR resource detail extraction
-#
-# The records step reveals raw FHIR R4 resources (Encounter, Claim, Condition,
-# ...). Each resource is enriched with an ordered `details` list of
-# label/value pairs so the UI can render every meaningful field - including
-# the SHA-specific Claim extensions (patient invoice, contribution status,
-# per-scheme coverage, principal contributor) - without re-parsing FHIR
-# client-side.
-# ---------------------------------------------------------------------------
 
 def _text(value) -> str:
     return str(value).strip() if value is not None else ""
@@ -1096,15 +1086,133 @@ def parse_request(data) -> tuple:
     if not isinstance(filters, dict):
         raise BadRequest("filters must be an object.")
     if not isinstance(steps, list) or not steps:
-        raise BadRequest("steps must be a non-empty list of: patient, eligibility, consent, records.")
+        raise BadRequest("steps must be a non-empty list of: patient, eligibility, consent, records, contributions.")
     cleaned = []
     for step in steps:
         step = str(step).strip().lower()
         if step not in KNOWN_STEPS:
-            raise BadRequest("Unknown step {}; allowed steps: patient, eligibility, consent.".format(step))
+            raise BadRequest("Unknown step {}; allowed steps: patient, eligibility, consent, records, contributions.".format(step))
         if step not in cleaned:
             cleaned.append(step)
     return cleaned, filters
+
+FS_TOKEN_CACHE_KEY = "fs_contribution_token"
+MAX_CONTRIBUTION_PAGES = 10
+
+def fs_settings() -> tuple:
+    doc = settings_doc()
+    base_url = (doc.get("fs_base_url") or "").strip()
+    auth_path = (doc.get("fs_auth") or "").strip()
+    ledger_path = (doc.get("fs_member_contribution") or "").strip()
+    username = (doc.get("fs_username") or "").strip()
+    password = doc.get_password("fs_password") or ""
+    missing = [
+        name
+        for name, value in (
+            ("fs_base_url", base_url),
+            ("fs_auth", auth_path),
+            ("fs_member_contribution", ledger_path),
+            ("fs_username", username),
+            ("fs_password", password),
+        )
+        if not value
+    ]
+    if missing:
+        raise BadRequest("HISI Settings " + " / ".join(missing) + " are not configured.")
+    return base_url, auth_path, ledger_path, username, password
+
+def fs_http_get(url: str, params, headers: dict) -> dict:
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=upstream_timeout_seconds())
+        response.raise_for_status()
+    except requests.exceptions.Timeout:
+        raise UpstreamError("FS request timed out.")
+    except requests.exceptions.HTTPError as e:
+        raise UpstreamError("FS request failed with HTTP {}.".format(getattr(e.response, "status_code", "error")))
+    except requests.exceptions.RequestException:
+        raise UpstreamError("FS request failed.")
+    try:
+        return response.json()
+    except ValueError:
+        raise UpstreamError("FS returned a non-JSON response.")
+
+def fs_token_expiry(token: str) -> float:
+    try:
+        segment = token.split(".")[1]
+        segment += "=" * (-len(segment) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(segment).decode("utf-8"))
+        return float(payload["exp"]) - 60
+    except (IndexError, ValueError, KeyError, AttributeError):
+        return 0.0
+
+def fs_login_token() -> str:
+    cached = getattr(frappe.local, FS_TOKEN_CACHE_KEY, None)
+    if cached and cached[1] > time.time():
+        return cached[0]
+    base_url, auth_path, _, username, password = fs_settings()
+    try:
+        response = requests.post(
+            join_url(base_url, auth_path),
+            json={"email": username, "password": password},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            timeout=upstream_timeout_seconds(),
+        )
+        response.raise_for_status()
+    except requests.exceptions.Timeout:
+        raise UpstreamError("FS login timed out.")
+    except requests.exceptions.HTTPError as e:
+        raise UpstreamError("FS login failed with HTTP {}.".format(getattr(e.response, "status_code", "error")))
+    except requests.exceptions.RequestException:
+        raise UpstreamError("FS login request failed.")
+    try:
+        body = response.json()
+    except ValueError:
+        raise UpstreamError("FS login returned a non-JSON response.")
+    token = body.get("accessToken") if isinstance(body, dict) else None
+    if not token:
+        raise UpstreamError("FS login did not return an access token.")
+    token = str(token)
+    setattr(frappe.local, FS_TOKEN_CACHE_KEY, (token, fs_token_expiry(token)))
+    return token
+
+def fetch_patient_contributions(cr_id: str) -> dict:
+    """Member contribution ledger for one CR ID: FS login + paginated ledger fetch."""
+    cr_id = str(cr_id or "").strip()
+    if not cr_id:
+        raise BadRequest("A cr_id is required for the contributions step.")
+    base_url, _, ledger_path, _, _ = fs_settings()
+    headers = {"Authorization": "Bearer " + fs_login_token(), "Accept": "application/json"}
+    url = join_url(join_url(base_url, ledger_path), cr_id)
+    params = {"idType": str(REQUEST_ID_TYPES["CR ID"])}
+    records = []
+    total = None
+    for _ in range(MAX_CONTRIBUTION_PAGES):
+        payload = fs_http_get(url, params, headers)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        data = data if isinstance(data, dict) else {}
+        if total is None:
+            total = data.get("total")
+        page = data.get("data")
+        if isinstance(page, list):
+            records.extend(item for item in page if isinstance(item, dict))
+        next_url = str(data.get("nextPageUrl") or "").strip()
+        if not next_url:
+            break
+        url, params = next_url, None
+    return {
+        "cr_id": cr_id,
+        "total": total,
+        "contributions": [
+            {
+                "payment_reference": item.get("paymentReferenceNumber") or "",
+                "invoice_number": item.get("invoiceNumber") or "",
+                "employer": item.get("employerName") or "",
+                "amount": item.get("amount"),
+                "period": str(item.get("period") or ""),
+            }
+            for item in records
+        ],
+    }
 
 @frappe.whitelist(methods=["POST", "GET"])
 @api_endpoint
@@ -1120,7 +1228,7 @@ def patient_flow(data: str | dict = "") -> dict:
         results = {STEP_PATIENT: result}
     else:
         cr_id = str(filters.get("cr_id") or filters.get("client") or "").strip()
-        if not cr_id and any(step in steps for step in (STEP_ELIGIBILITY, STEP_CONSENT)):
+        if not cr_id and any(step in steps for step in (STEP_ELIGIBILITY, STEP_CONSENT, STEP_CONTRIBUTIONS)):
             raise BadRequest("A cr_id filter is required when the patient step is not included.")
         results = {}
 
@@ -1128,6 +1236,8 @@ def patient_flow(data: str | dict = "") -> dict:
         results[STEP_ELIGIBILITY] = step_eligibility(cr_id, filters)
     if STEP_CONSENT in steps:
         results[STEP_CONSENT] = step_consent(cr_id)
+    if STEP_CONTRIBUTIONS in steps:
+        results[STEP_CONTRIBUTIONS] = fetch_patient_contributions(cr_id)
     if STEP_RECORDS in steps:
         results[STEP_RECORDS] = step_records_multi(filters, results)
 
