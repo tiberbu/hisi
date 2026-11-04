@@ -19,7 +19,10 @@
   "jwt_ttl_s",
   "eligibility_and_coverage_tab",
   "fs_base_url",
+  "fs_auth",
   "fs_member_contribution",
+  "fs_username",
+  "fs_password",
   "enable_uat_simulation",
   "uat_base_url",
   "fetch_patient_consent",
@@ -220,11 +223,26 @@
    "fieldname": "surveillance_retention_days",
    "fieldtype": "Int",
    "label": "Audit retention (days)"
+  },
+  {
+   "fieldname": "fs_username",
+   "fieldtype": "Data",
+   "label": "FS Username"
+  },
+  {
+   "fieldname": "fs_password",
+   "fieldtype": "Password",
+   "label": "FS Password"
+  },
+  {
+   "fieldname": "fs_auth",
+   "fieldtype": "Data",
+   "label": "FS Auth"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-10-28 21:29:16.411551",
+ "modified": "2026-11-04 12:58:35.252501",
  "modified_by": "Administrator",
  "module": "Hisi",
  "name": "HISI Settings",
