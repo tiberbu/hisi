@@ -1,0 +1,100 @@
+{
+ "actions": [],
+ "autoname": "field:category",
+ "creation": "2026-11-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "category",
+  "template_steps_section",
+  "template_steps",
+  "total_days",
+  "note_templates_section",
+  "note_templates"
+ ],
+ "fields": [
+  {
+   "description": "The surveillance category this template belongs to (one template document per category).",
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Category",
+   "options": "Claim\nPatient visit\nOverall facility",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "template_steps_section",
+   "fieldtype": "Section Break",
+   "label": "Step timeline"
+  },
+  {
+   "description": "The starting steps for new cases of this category, each with a target number of days.",
+   "fieldname": "template_steps",
+   "fieldtype": "Table",
+   "label": "Steps",
+   "options": "HISI Surveillance Template Step",
+   "reqd": 1
+  },
+  {
+   "description": "Sum of the steps' target days (kept in sync by the controller) - the wizard's Steps screen shows the same total to guide the due date.",
+   "fieldname": "total_days",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Total Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "note_templates_section",
+   "fieldtype": "Section Break",
+   "label": "Note templates"
+  },
+  {
+   "description": "Note templates offered when a case is assigned; the officer receives the chosen one as an editable note.",
+   "fieldname": "note_templates",
+   "fieldtype": "Table",
+   "label": "Note Templates",
+   "options": "HISI Surveillance Template Note"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-11-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Template",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "HISI Insurance Provider",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Insurance Surveillance"
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

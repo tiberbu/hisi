@@ -7,3 +7,4 @@
 # hisi.patches.settings_defaults
 hisi.patches.orgs_to_erpnext
 hisi.patches.drop_org_doctypes
+hisi.patches.field_surveillance_templates
