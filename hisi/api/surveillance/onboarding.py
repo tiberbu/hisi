@@ -129,7 +129,7 @@ def _display_name(email):
 @frappe.whitelist(methods=["GET"])
 @rate_limit(limit=120, seconds=60)
 @api_endpoint
-def list_payer_members():
+def list_payer_members(page=None, page_size=None):
 	start = time.time()
 	user = frappe.session.user
 	orgs = caller_payer_companies(user)
@@ -201,10 +201,27 @@ def list_payer_members():
 				"status": "expired" if expired else "pending",
 			}
 		)
-	log_event(None, user, "members_listed", "user", None, details={"scope": scope_kind, "total": len(members)}, outcome="ok", duration_ms=duration_ms(start))
+	# Scope-wide aggregates (the stat tiles must count the whole roster, not
+	# just the current page) + the page slice of the member rows.
+	# Newest first across the whole roster, so pages keep the table's
+	# established ordering (fresh invites at the top).
+	members.sort(key=lambda member: member["added_on"] or "", reverse=True)
+	total = len(members)
+	active_count = sum(1 for member in members if member["status"] == "active")
+	try:
+		page = max(1, int(page or 1))
+	except (TypeError, ValueError):
+		page = 1
+	try:
+		page_size = int(page_size or 10)
+	except (TypeError, ValueError):
+		page_size = 10
+	page_size = min(max(page_size, 1), 100)
+	start_index = (page - 1) * page_size
+	log_event(None, user, "members_listed", "user", None, details={"scope": scope_kind, "total": total, "page": page}, outcome="ok", duration_ms=duration_ms(start))
 	return APIResponse.success(
 		data={
-			"members": members,
+			"members": members[start_index:start_index + page_size],
 			"companies": [
 				{
 					"company": name,
@@ -213,7 +230,11 @@ def list_payer_members():
 				}
 				for name in orgs
 			],
-			"total": len(members),
+			"total": total,
+			"active_count": active_count,
+			"pending_count": total - active_count,
+			"page": page,
+			"page_size": page_size,
 		}
 	)
 

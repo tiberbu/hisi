@@ -162,9 +162,11 @@ def require_officer_user(email):
 @frappe.whitelist(methods=["GET"])
 @rate_limit(limit=300, seconds=60)
 @api_endpoint
-def list_cases(status=None, category=None):
+def list_cases(status=None, category=None, page=None, page_size=None):
 	"""The case list with its summary tiles. HQ sees every case; an officer
-	sees the cases assigned to them (the server decides the scope)."""
+	sees the cases assigned to them (the server decides the scope). Paged:
+	the tiles summarize the whole filtered set, `cases` carries only the
+	requested page, and total/page/page_size drive the client pager."""
 	user = frappe.session.user
 	scope = common.scope_kind(user)
 	filters = {}
@@ -180,12 +182,21 @@ def list_cases(status=None, category=None):
 		filters["category"] = category
 	if scope == "officer":
 		filters["assigned_officer"] = user
+	try:
+		page = max(1, int(page or 1))
+	except (TypeError, ValueError):
+		page = 1
+	try:
+		page_size = int(page_size or 10)
+	except (TypeError, ValueError):
+		page_size = 10
+	page_size = min(max(page_size, 1), 100)
 	rows = frappe.get_all(
 		"HISI Surveillance Case",
 		filters=filters,
 		fields=["name", "case_no", "title", "category", "priority", "due_date", "status", "field_office", "assigned_officer", "creation"],
 		order_by="creation desc",
-		limit=200,
+		limit=1000,
 	)
 	# One batch query for the pending reassignment flags (list label + tile).
 	pending_by_case = {}
@@ -207,14 +218,24 @@ def list_cases(status=None, category=None):
 		):
 			done, total = step_counts.get(step.parent, (0, 0))
 			step_counts[step.parent] = (done + (1 if step.done else 0), total + 1)
-	cases = []
+	all_cases = []
 	for row in rows:
 		done, total = step_counts.get(row.name, (0, 0))
 		progress = {"done": done, "total": total, "percent": int(round(100.0 * done / total)) if total else 0}
-		cases.append(common.case_list_row(row, pending_by_case.get(row.name), progress))
+		all_cases.append(common.case_list_row(row, pending_by_case.get(row.name), progress))
 	summary = common.list_summary(rows)
 	summary["reassignment_requests"] = sum(pending_by_case.values())
-	return APIResponse.success(data={"cases": cases, "counts": summary, "scope": scope})
+	start = (page - 1) * page_size
+	return APIResponse.success(
+		data={
+			"cases": all_cases[start:start + page_size],
+			"counts": summary,
+			"scope": scope,
+			"total": len(all_cases),
+			"page": page,
+			"page_size": page_size,
+		}
+	)
 
 
 @frappe.whitelist(methods=["GET"])
