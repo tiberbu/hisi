@@ -1,7 +1,7 @@
 {
  "actions": [],
  "autoname": "field:case_no",
- "creation": "2026-11-05 00:00:00.000000",
+ "creation": "2026-11-05 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -25,6 +25,7 @@
   "findings_outcome",
   "findings_action",
   "findings_summary",
+  "findings_attachments",
   "closed_section",
   "closed_by",
   "closed_on",
@@ -116,7 +117,6 @@
    "description": "What the case covers: claim rows, patient rows and/or facility rows, depending on the category.",
    "fieldname": "scope_items",
    "fieldtype": "Table",
-   "in_list_view": 1,
    "label": "Scope Items",
    "options": "HISI Surveillance Case Scope Item",
    "reqd": 1
@@ -199,13 +199,19 @@
    "fieldtype": "Link",
    "label": "Created By",
    "options": "User"
+  },
+  {
+   "description": "Optional files the officer attaches to the findings.",
+   "fieldname": "findings_attachments",
+   "fieldtype": "JSON",
+   "label": "Findings Attachments"
   }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-11-05 00:00:00.000000",
+ "modified": "2026-11-07 16:18:09.651322",
  "modified_by": "Administrator",
- "module": "hisi",
+ "module": "Hisi",
  "name": "HISI Surveillance Case",
  "naming_rule": "By fieldname",
  "owner": "Administrator",

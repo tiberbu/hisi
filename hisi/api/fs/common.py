@@ -9,6 +9,7 @@ Role model (server-side, the real authority):
   findings, request reassignment.
 The client gate in the frontend mirrors this only for presentation."""
 
+import json
 import time
 
 import frappe
@@ -36,6 +37,25 @@ def request_ip():
 		return None
 
 
+def attachment_list(raw):
+	"""Normalize an attachment JSON field to a list of row dicts.
+
+	The field is a JSON column: writes serialize a list to a JSON string,
+	but a doc loaded from the DB hands it back as that raw string (this
+	bench does not auto-parse JSON fields on read), so read sites must
+	parse it explicitly. Tolerates None / "" / malformed input."""
+	if raw in (None, ""):
+		return []
+	if isinstance(raw, str):
+		try:
+			raw = json.loads(raw)
+		except ValueError:
+			return []
+	if not isinstance(raw, list):
+		return []
+	return [row for row in raw if isinstance(row, dict)]
+
+
 def user_roles(user=None):
 	user = user or frappe.session.user
 	return set(frappe.get_roles(user)) if user and user != "Guest" else set()
@@ -47,6 +67,12 @@ def is_hq(user=None):
 
 def is_officer(user=None):
 	return is_platform_user(user) or OFFICER_ROLE in user_roles(user)
+
+
+def is_provider(user=None):
+	"""Strict check for the HISI Insurance Provider role (no platform
+	bypass): the report view and case closing are reserved for it."""
+	return PROVIDER_ROLE in user_roles(user)
 
 
 def scope_kind(user=None):
@@ -63,6 +89,11 @@ def scope_kind(user=None):
 def require_hq(user=None):
 	if not is_hq(user):
 		raise Forbidden("This action requires the HISI Insurance Provider role.")
+
+
+def require_provider(user=None):
+	if not is_provider(user):
+		raise Forbidden("This action is reserved for HISI Insurance Provider users.")
 
 
 def require_officer(user=None):
@@ -244,6 +275,8 @@ def steps_payload(case):
 				"done": bool(step.done),
 				"done_by": step.done_by,
 				"done_on": str(step.done_on) if step.done_on else None,
+				"note": step.note or None,
+				"attachments": attachment_list(step.attachments),
 			}
 		)
 	steps.sort(key=lambda row: (row["sort"], row["step_key"]))
@@ -334,6 +367,7 @@ def case_view(case, viewer_scope, is_assignee):
 				"outcome": case.findings_outcome,
 				"action": case.findings_action,
 				"summary": case.findings_summary,
+				"attachments": attachment_list(case.findings_attachments),
 			},
 			"reassignment": reassignment_payload(case),
 			"closed_by": case.closed_by,
@@ -341,7 +375,11 @@ def case_view(case, viewer_scope, is_assignee):
 			"created_on": str(case.creation) if case.creation else None,
 		},
 		"activity": activity_payload(case),
-		"viewer": {"role": viewer_scope, "is_assignee": bool(is_assignee)},
+		"viewer": {
+			"role": viewer_scope,
+			"is_assignee": bool(is_assignee),
+			"is_provider": is_provider(),
+		},
 	}
 
 
