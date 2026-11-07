@@ -1,0 +1,59 @@
+{
+ "actions": [],
+ "creation": "2026-11-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "action",
+  "details",
+  "actor",
+  "actor_name",
+  "created_on"
+ ],
+ "fields": [
+  {
+   "description": "Machine action code (case_created, status_assigned, status_accepted, status_in_progress, status_findings_submitted, status_closed, status_returned, step_done, evidence_added, findings_saved, reassignment_requested, reassignment_reassigned, reassignment_declined, template_saved).",
+   "fieldname": "action",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Action",
+   "reqd": 1
+  },
+  {
+   "description": "Plain-language description of what happened.",
+   "fieldname": "details",
+   "fieldtype": "Text",
+   "in_list_view": 1,
+   "label": "Details"
+  },
+  {
+   "fieldname": "actor",
+   "fieldtype": "Link",
+   "label": "Actor",
+   "options": "User"
+  },
+  {
+   "fieldname": "actor_name",
+   "fieldtype": "Data",
+   "label": "Actor Name"
+  },
+  {
+   "fieldname": "created_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Created On"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Case Activity",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "created_on",
+ "sort_order": "ASC",
+ "states": []
+}

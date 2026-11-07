@@ -1,0 +1,76 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "creation": "2026-11-06 12:38:42.990760",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "dw_host",
+  "dw_port",
+  "dw_database_name",
+  "dw_user",
+  "dw_password",
+  "dw_schema"
+ ],
+ "fields": [
+  {
+   "fieldname": "dw_host",
+   "fieldtype": "Data",
+   "label": "DW Host"
+  },
+  {
+   "default": "5432",
+   "fieldname": "dw_port",
+   "fieldtype": "Int",
+   "label": "DW Port"
+  },
+  {
+   "fieldname": "dw_database_name",
+   "fieldtype": "Data",
+   "label": "DW Database Name"
+  },
+  {
+   "fieldname": "dw_user",
+   "fieldtype": "Data",
+   "label": "DW User"
+  },
+  {
+   "fieldname": "dw_password",
+   "fieldtype": "Password",
+   "label": "DW Password"
+  },
+  {
+   "default": "public",
+   "fieldname": "dw_schema",
+   "fieldtype": "Data",
+   "label": "DW Schema"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-06 12:41:56.060535",
+ "modified_by": "Administrator",
+ "module": "Hisi",
+ "name": "DW Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

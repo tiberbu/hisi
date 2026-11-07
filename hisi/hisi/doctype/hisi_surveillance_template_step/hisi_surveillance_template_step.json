@@ -1,0 +1,44 @@
+{
+ "actions": [],
+ "creation": "2026-11-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "text",
+  "target_days",
+  "sort"
+ ],
+ "fields": [
+  {
+   "fieldname": "text",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Text",
+   "reqd": 1
+  },
+  {
+   "fieldname": "target_days",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Target Days",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sort",
+   "fieldtype": "Int",
+   "label": "Sort"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Template Step",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "sort",
+ "sort_order": "ASC",
+ "states": []
+}

@@ -1,0 +1,123 @@
+{
+ "actions": [],
+ "creation": "2026-11-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "case",
+  "requested_by",
+  "reason_category",
+  "explanation",
+  "status",
+  "reply",
+  "new_officer",
+  "resolved_by",
+  "resolved_on"
+ ],
+ "fields": [
+  {
+   "description": "The case this request applies to (one pending request per case at a time).",
+   "fieldname": "case",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Case",
+   "options": "HISI Surveillance Case",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "requested_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Requested By",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "reason_category",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Reason Category",
+   "options": "Conflict of interest\nWorkload\nDistance or safety\nLack of expertise\nOther",
+   "reqd": 1
+  },
+  {
+   "fieldname": "explanation",
+   "fieldtype": "Text",
+   "label": "Explanation",
+   "reqd": 1
+  },
+  {
+   "default": "pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "pending\nreassigned\ndeclined"
+  },
+  {
+   "description": "HQ's reply to the officer when the request is declined.",
+   "fieldname": "reply",
+   "fieldtype": "Text",
+   "label": "Reply"
+  },
+  {
+   "description": "The officer the case is reassigned to (set when HQ reassigns).",
+   "fieldname": "new_officer",
+   "fieldtype": "Link",
+   "label": "New Officer",
+   "options": "User"
+  },
+  {
+   "fieldname": "resolved_by",
+   "fieldtype": "Link",
+   "label": "Resolved By",
+   "options": "User"
+  },
+  {
+   "fieldname": "resolved_on",
+   "fieldtype": "Datetime",
+   "label": "Resolved On"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-11-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Reassignment",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "HISI Insurance Provider",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "HISI Insurance Surveillance"
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

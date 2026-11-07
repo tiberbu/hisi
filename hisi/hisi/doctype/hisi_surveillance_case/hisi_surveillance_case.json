@@ -1,0 +1,245 @@
+{
+ "actions": [],
+ "autoname": "field:case_no",
+ "creation": "2026-11-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "case_no",
+  "category",
+  "title",
+  "description",
+  "priority",
+  "due_date",
+  "status",
+  "field_office",
+  "assigned_officer",
+  "officer_notes",
+  "scope_section",
+  "scope_items",
+  "steps_section",
+  "steps",
+  "evidence_section",
+  "evidence",
+  "findings_section",
+  "findings_outcome",
+  "findings_action",
+  "findings_summary",
+  "closed_section",
+  "closed_by",
+  "closed_on",
+  "activity_section",
+  "activity",
+  "created_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "case_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Case No",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Category",
+   "options": "Claim\nPatient visit\nOverall facility",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "priority",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Priority",
+   "options": "Urgent\nHigh\nMedium\nLow",
+   "reqd": 1
+  },
+  {
+   "fieldname": "due_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Due Date",
+   "reqd": 1
+  },
+  {
+   "default": "assigned",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "assigned\naccepted\nin_progress\nfindings_submitted\nclosed"
+  },
+  {
+   "description": "The field office of the assigned officer (display value, resolved from the officer's organization at creation).",
+   "fieldname": "field_office",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Field Office"
+  },
+  {
+   "fieldname": "assigned_officer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Assigned Officer",
+   "options": "User",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "description": "The note written to the officer at assignment (from a template or free text).",
+   "fieldname": "officer_notes",
+   "fieldtype": "Text",
+   "label": "Officer Notes"
+  },
+  {
+   "fieldname": "scope_section",
+   "fieldtype": "Section Break",
+   "label": "Scope"
+  },
+  {
+   "description": "What the case covers: claim rows, patient rows and/or facility rows, depending on the category.",
+   "fieldname": "scope_items",
+   "fieldtype": "Table",
+   "in_list_view": 1,
+   "label": "Scope Items",
+   "options": "HISI Surveillance Case Scope Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "steps_section",
+   "fieldtype": "Section Break",
+   "label": "Steps"
+  },
+  {
+   "description": "The case's step checklist, copied from the category template at creation and edited per case.",
+   "fieldname": "steps",
+   "fieldtype": "Table",
+   "label": "Steps",
+   "options": "HISI Surveillance Case Step"
+  },
+  {
+   "fieldname": "evidence_section",
+   "fieldtype": "Section Break",
+   "label": "Evidence"
+  },
+  {
+   "description": "Files the officer uploads during fieldwork.",
+   "fieldname": "evidence",
+   "fieldtype": "Table",
+   "label": "Evidence",
+   "options": "HISI Surveillance Case Evidence"
+  },
+  {
+   "fieldname": "findings_section",
+   "fieldtype": "Section Break",
+   "label": "Findings"
+  },
+  {
+   "fieldname": "findings_outcome",
+   "fieldtype": "Select",
+   "label": "Findings Outcome",
+   "options": "Substantiated\nPartially substantiated\nNot substantiated"
+  },
+  {
+   "fieldname": "findings_action",
+   "fieldtype": "Data",
+   "label": "Recommended Action"
+  },
+  {
+   "fieldname": "findings_summary",
+   "fieldtype": "Text",
+   "label": "Findings Summary"
+  },
+  {
+   "fieldname": "activity_section",
+   "fieldtype": "Section Break",
+   "label": "Activity"
+  },
+  {
+   "fieldname": "closed_section",
+   "fieldtype": "Section Break",
+   "label": "Closure"
+  },
+  {
+   "fieldname": "closed_by",
+   "fieldtype": "Link",
+   "label": "Closed By",
+   "options": "User"
+  },
+  {
+   "fieldname": "closed_on",
+   "fieldtype": "Datetime",
+   "label": "Closed On"
+  },
+  {
+   "description": "Append-only audit trail: every status change and key action with who and when.",
+   "fieldname": "activity",
+   "fieldtype": "Table",
+   "label": "Activity",
+   "options": "HISI Surveillance Case Activity"
+  },
+  {
+   "fieldname": "created_by",
+   "fieldtype": "Link",
+   "label": "Created By",
+   "options": "User"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-11-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "hisi",
+ "name": "HISI Surveillance Case",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "HISI Insurance Provider",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Insurance Surveillance",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}
