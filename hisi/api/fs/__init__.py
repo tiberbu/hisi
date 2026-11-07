@@ -12,10 +12,13 @@ from hisi.api.fs.api import (
 	close_case,
 	create_case,
 	decide_reassignment,
+	get_attachment,
 	get_case,
 	list_cases,
 	list_officers,
 	list_templates,
+	remove_findings_attachment,
+	remove_step_attachment,
 	return_for_rework,
 	request_reassignment,
 	save_findings,
@@ -25,6 +28,8 @@ from hisi.api.fs.api import (
 	submit_findings,
 	update_step,
 	upload_evidence,
+	upload_findings_attachment,
+	upload_step_attachment,
 )
 
 __all__ = [
@@ -32,10 +37,13 @@ __all__ = [
 	"close_case",
 	"create_case",
 	"decide_reassignment",
+	"get_attachment",
 	"get_case",
 	"list_cases",
 	"list_officers",
 	"list_templates",
+	"remove_findings_attachment",
+	"remove_step_attachment",
 	"return_for_rework",
 	"request_reassignment",
 	"save_findings",
@@ -45,4 +53,6 @@ __all__ = [
 	"submit_findings",
 	"update_step",
 	"upload_evidence",
+	"upload_findings_attachment",
+	"upload_step_attachment",
 ]

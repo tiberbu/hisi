@@ -42,6 +42,31 @@ ALLOWED_EVIDENCE_MIME = {
 	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
 MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
+# File.file_type stores the uppercase extension, not a mime type - the
+# preview dialog needs the real one, so map the allowed extensions back.
+EXTENSION_MIME = {
+	"JPG": "image/jpeg",
+	"JPEG": "image/jpeg",
+	"PNG": "image/png",
+	"WEBP": "image/webp",
+	"GIF": "image/gif",
+	"HEIC": "image/heic",
+	"HEIF": "image/heif",
+	"PDF": "application/pdf",
+	"TXT": "text/plain",
+	"CSV": "text/csv",
+	"DOC": "application/msword",
+	"DOCX": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"XLS": "application/vnd.ms-excel",
+	"XLSX": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+def mime_for_file(file_doc):
+	ext = str(getattr(file_doc, "file_type", "") or "").strip().upper()
+	return EXTENSION_MIME.get(ext, "application/octet-stream")
+
+
 MAX_SCOPE_ITEMS = 20
 MAX_STEPS = 12
 MAX_FINDINGS_CHARS = 20000
@@ -211,6 +236,44 @@ def get_case(case_no):
 	return APIResponse.success(data=common.case_view(doc, scope, doc.assigned_officer == user))
 
 
+@frappe.whitelist(methods=["GET"])
+@rate_limit(limit=60, seconds=60)
+@api_endpoint
+def get_attachment(case_no, file_name):
+	"""The file bytes (base64) of a case attachment for the preview dialog.
+	The caller must be able to view the case, and the File must actually be
+	attached to it (a checklist step or the findings) - arbitrary File docs
+	are never served."""
+	user = frappe.session.user
+	doc = common.require_case(case_no)
+	if not common.is_hq(user):
+		if not common.is_officer(user):
+			raise Forbidden("This surface is restricted to surveillance roles.")
+		if doc.assigned_officer != user:
+			raise Forbidden("This case is not assigned to you.")
+	targets = []
+	for step in doc.get("steps") or []:
+		targets.extend(common.attachment_list(step.attachments))
+	targets.extend(common.attachment_list(doc.findings_attachments))
+	if not any(row.get("name") == file_name for row in targets):
+		raise NotFound("Attachment not found on this case.")
+	if not frappe.db.exists("File", file_name):
+		raise NotFound("Attachment not found on this case.")
+	file_doc = frappe.get_doc("File", file_name)
+	content = file_doc.get_content()
+	raw = content if isinstance(content, bytes) else str(content).encode("utf-8")
+	if len(raw) > MAX_EVIDENCE_BYTES:
+		raise BadRequest("Files over 10 MB cannot be previewed.")
+	return APIResponse.success(
+		data={
+			"file_name": file_doc.file_name,
+			"mime_type": mime_for_file(file_doc),
+			"file_size": file_doc.file_size,
+			"content_b64": base64.b64encode(raw).decode("ascii"),
+		}
+	)
+
+
 @frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=60)
 @api_endpoint
@@ -296,11 +359,19 @@ def start_fieldwork(case_no):
 	return APIResponse.success(data=common.case_view(doc, "officer", True))
 
 
+def _rich_text_of(html):
+	"""Plain-text view of a rich-HTML note, for required-checks and logs."""
+	return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(html or ""))).strip()
+
+
 @frappe.whitelist(methods=["POST"])
 @rate_limit(limit=60, seconds=60)
 @api_endpoint
-def update_step(case_no, step_key, done):
-	"""Officer ticks (or unticks) a checklist step while in progress."""
+def update_step(case_no, step_key, done, note=None):
+	"""Officer ticks (or unticks) a checklist step while in progress. Ticking
+	requires details describing what was done - a rich-HTML note (stored as-is
+	on the step) plus optional attachments; the plain-text view is quoted in
+	the activity trail."""
 	user = frappe.session.user
 	doc = common.require_officer_case(case_no, user)
 	if doc.status != common.STATUS_IN_PROGRESS:
@@ -310,18 +381,165 @@ def update_step(case_no, step_key, done):
 	if step is None:
 		raise NotFound("Step not found on this case.")
 	flag = 1 if done in (True, 1, "1", "true", "True") else 0
+	html = str(note or "").strip()
+	if html in ("", "<p></p>", "<p><br></p>", "<p><br/></p>"):
+		html = ""
+	text = _rich_text_of(html)
+	attachments = common.attachment_list(step.attachments)
+	if flag and not text and not attachments:
+		raise BadRequest("Add details (some text or an attachment) before marking this step complete.")
 	step.done = flag
 	if flag:
+		step.note = html or None
 		step.done_by = user
 		step.done_on = frappe.utils.now()
-		common.log_case_activity(doc, "step_done", "Ticked: {}".format(step.text))
+		summary = text[:200] if text else "attachment(s) only"
+		common.log_case_activity(doc, "step_done", "Ticked: {} — {}".format(step.text, summary))
 	else:
+		step.note = None
 		step.done_by = None
 		step.done_on = None
 		common.log_case_activity(doc, "step_undone", "Unticked: {}".format(step.text))
 	doc.save(ignore_permissions=True)
 	progress = common.case_progress(doc)
-	return APIResponse.success(data={"step_key": step_key, "done": bool(flag), "progress": progress})
+	return APIResponse.success(data={"step_key": step_key, "done": bool(flag), "note": html or None, "progress": progress})
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=60, seconds=60)
+@api_endpoint
+def upload_step_attachment(case_no, step_key, filename, content_b64, mime_type=None):
+	"""Officer uploads one file attached to a checklist step while in progress;
+	stored private against the case and tracked in the step's attachment list."""
+	user = frappe.session.user
+	doc = common.require_officer_case(case_no, user)
+	if doc.status != common.STATUS_IN_PROGRESS:
+		raise Conflict("Attachments can only be added while the case is in progress.")
+	step_key = str(step_key or "").strip()
+	step = next((row for row in doc.get("steps") or [] if row.step_key == step_key), None)
+	if step is None:
+		raise NotFound("Step not found on this case.")
+	file_doc = _store_case_file(doc, filename, content_b64, mime_type, "Attachments")
+	attachments = common.attachment_list(step.attachments)
+	attachments.append(_attachment_row(file_doc))
+	step.attachments = attachments
+	common.log_case_activity(doc, "step_attachment_added", "Attached {} to step {}.".format(file_doc.file_name, step.text))
+	doc.save(ignore_permissions=True)
+	return APIResponse.success(data={"attachments": attachments})
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=60, seconds=60)
+@api_endpoint
+def remove_step_attachment(case_no, step_key, file_name):
+	"""Officer removes a file attached to a checklist step while in progress."""
+	user = frappe.session.user
+	doc = common.require_officer_case(case_no, user)
+	if doc.status != common.STATUS_IN_PROGRESS:
+		raise Conflict("Attachments can only be removed while the case is in progress.")
+	step_key = str(step_key or "").strip()
+	step = next((row for row in doc.get("steps") or [] if row.step_key == step_key), None)
+	if step is None:
+		raise NotFound("Step not found on this case.")
+	attachments = common.attachment_list(step.attachments)
+	target = next((a for a in attachments if a.get("name") == file_name), None)
+	if target is None:
+		raise NotFound("Attachment not found on this step.")
+	removed_name = target.get("file_name")
+	step.attachments = [a for a in attachments if a.get("name") != file_name]
+	_delete_attachment_file(file_name)
+	common.log_case_activity(doc, "step_attachment_removed", "Removed {} from step {}.".format(removed_name, step.text))
+	doc.save(ignore_permissions=True)
+	return APIResponse.success(data={"attachments": step.attachments})
+
+
+def _store_case_file(doc, filename, content_b64, mime_type, label):
+	"""Validate + store one private file against the case, return the File doc."""
+	mime = str(mime_type or "").strip().lower()
+	if mime not in ALLOWED_EVIDENCE_MIME:
+		raise BadRequest("That file type is not allowed. Upload images, PDF, text, CSV or Office documents.")
+	try:
+		raw = base64.b64decode(str(content_b64 or ""), validate=True)
+	except (ValueError, TypeError):
+		raise BadRequest("The file content could not be decoded.")
+	if not raw:
+		raise BadRequest("The file is empty.")
+	if len(raw) > MAX_EVIDENCE_BYTES:
+		raise BadRequest("{} are limited to 10 MB.".format(label))
+	file_doc = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": safe_upload_name(filename),
+			"is_private": 1,
+			"attached_to_doctype": "HISI Surveillance Case",
+			"attached_to_name": doc.name,
+			# content must be in the doc at construction time: with no file_url
+			# and no content, File.is_remote_file is True and save_file returns
+			# without writing, so insert() would fail in validate_file_on_disk.
+			"content": raw,
+		}
+	)
+	file_doc.insert(ignore_permissions=True)
+	return file_doc
+
+
+def _attachment_row(file_doc):
+	return {
+		"name": file_doc.name,
+		"file_name": file_doc.file_name,
+		"file_url": file_doc.file_url,
+		"mime_type": file_doc.file_type,
+		"file_size": file_doc.file_size,
+		"uploaded_on": frappe.utils.now(),
+	}
+
+
+def _delete_attachment_file(file_name):
+	try:
+		frappe.delete_doc("File", file_name, ignore_permissions=True)
+	except Exception:
+		# Keep the metadata removal authoritative even if disk cleanup fails.
+		frappe.logger("hisi.fs").warning("Could not delete File doc %s", file_name)
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=60, seconds=60)
+@api_endpoint
+def upload_findings_attachment(case_no, filename, content_b64, mime_type=None):
+	"""Officer attaches an optional file to the findings draft while in
+	progress; the files travel with the findings when they are submitted."""
+	user = frappe.session.user
+	doc = common.require_officer_case(case_no, user)
+	if doc.status != common.STATUS_IN_PROGRESS:
+		raise Conflict("Findings attachments can only be added while the case is in progress.")
+	file_doc = _store_case_file(doc, filename, content_b64, mime_type, "Attachments")
+	attachments = common.attachment_list(doc.findings_attachments)
+	attachments.append(_attachment_row(file_doc))
+	doc.findings_attachments = attachments
+	common.log_case_activity(doc, "findings_attachment_added", "Attached {} to the findings.".format(file_doc.file_name))
+	doc.save(ignore_permissions=True)
+	return APIResponse.success(data={"attachments": attachments})
+
+
+@frappe.whitelist(methods=["POST"])
+@rate_limit(limit=60, seconds=60)
+@api_endpoint
+def remove_findings_attachment(case_no, file_name):
+	"""Officer removes a file from the findings draft while in progress."""
+	user = frappe.session.user
+	doc = common.require_officer_case(case_no, user)
+	if doc.status != common.STATUS_IN_PROGRESS:
+		raise Conflict("Findings attachments can only be removed while the case is in progress.")
+	attachments = common.attachment_list(doc.findings_attachments)
+	target = next((a for a in attachments if a.get("name") == file_name), None)
+	if target is None:
+		raise NotFound("Attachment not found on the findings.")
+	removed_name = target.get("file_name")
+	doc.findings_attachments = [a for a in attachments if a.get("name") != file_name]
+	_delete_attachment_file(file_name)
+	common.log_case_activity(doc, "findings_attachment_removed", "Removed {} from the findings.".format(removed_name))
+	doc.save(ignore_permissions=True)
+	return APIResponse.success(data={"attachments": doc.findings_attachments})
 
 
 @frappe.whitelist(methods=["POST"])
@@ -352,12 +570,9 @@ def upload_evidence(case_no, filename, content_b64, mime_type=None, note=None):
 			"is_private": 1,
 			"attached_to_doctype": "HISI Surveillance Case",
 			"attached_to_name": doc.name,
+			"content": raw,
 		}
 	)
-	file_doc.flags.new_file = True
-	file_doc.save_file(content=raw)
-	# The bytes are on disk now; keep the content column clean.
-	file_doc.content = None
 	file_doc.insert(ignore_permissions=True)
 	doc.append(
 		"evidence",
@@ -449,9 +664,9 @@ def submit_findings(case_no):
 @api_endpoint
 def close_case(case_no):
 	"""HQ approves the findings and closes the case: findings submitted
-	→ closed."""
+	→ closed. Reserved for HISI Insurance Provider users."""
 	user = frappe.session.user
-	common.require_hq(user)
+	common.require_provider(user)
 	doc = common.require_case(case_no)
 	if doc.status != common.STATUS_FINDINGS_SUBMITTED:
 		raise Conflict("Only submitted findings can be closed.")
@@ -560,17 +775,31 @@ def decide_reassignment(case_no, decision, new_officer=None, reply=None):
 @rate_limit(limit=120, seconds=60)
 @api_endpoint
 def list_officers():
-	"""HQ: the field officer picker data - every active account holding the
-	surveillance role, with office, active case count and the counties their
-	active cases touch (the wizard groups matching officers first)."""
+	"""HQ: the field officer picker data - the onboarded officers (an active
+	Employee record carrying the surveillance designation, the same source
+	the dispatch flow's confirmed list uses) instead of every account that
+	happens to hold the role, with office, active case count and the
+	counties their active cases touch (the wizard groups matching officers
+	first)."""
 	user = frappe.session.user
 	common.require_hq(user)
-	parents = [row.parent for row in frappe.get_all("Has Role", filters={"role": OFFICER_ROLE}, fields=["parent"])]
+	onboarded = []
+	for row in frappe.get_all(
+		"Employee",
+		filters={"status": "Active", "designation": OFFICER_ROLE},
+		fields=["user_id"],
+	):
+		if row.user_id and row.user_id not in onboarded:
+			onboarded.append(row.user_id)
 	officers = []
-	if parents:
-		users = frappe.get_all("User", filters={"name": ["in", parents], "enabled": 1}, fields=["name", "full_name"], order_by="full_name asc")
+	if onboarded:
+		users = frappe.get_all("User", filters={"name": ["in", onboarded], "enabled": 1}, fields=["name", "full_name"], order_by="full_name asc")
 		for row in users:
 			email = row.name
+			# Onboarding grants the role; an account that lost it cannot work
+			# cases, so it stays out of the picker.
+			if OFFICER_ROLE not in set(frappe.get_roles(email)):
+				continue
 			active_cases = frappe.get_all(
 				"HISI Surveillance Case",
 				filters={"assigned_officer": email, "status": ["in", common.ACTIVE_STATUSES]},
@@ -606,7 +835,8 @@ def search_facilities(term):
 	"""Type-ahead over the live DHA facility register (the same HWR
 	``Health Facility`` resource the mandate flow searches) for the
 	wizard's scope step. Each register row carries the name plus the
-	county and level the picker shows beside it."""
+	facility identifiers (code / fid), so rows that share a name stay
+	distinguishable in the picker and the options can key on a unique id."""
 	user = frappe.session.user
 	common.scope_kind(user)
 	term = str(term or "").strip()
@@ -628,6 +858,8 @@ def search_facilities(term):
 	facilities = [
 		{
 			"facility_name": row.get("facility_name"),
+			"facility_code": row.get("facility_code") or None,
+			"facility_fid": row.get("facility_fid") or None,
 			"county": row.get("county") or None,
 			"level": row.get("facility_level") or None,
 			"operational_status": row.get("operational_status") or None,
