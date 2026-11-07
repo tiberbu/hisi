@@ -16,7 +16,9 @@ import frappe
 from frappe.rate_limiter import rate_limit
 
 from hisi.api.response_handler import APIResponse, BadRequest, Conflict, Forbidden, NotFound, api_endpoint
+from hisi.api.patient import http_get
 from hisi.api.fs import common
+from hisi.api.surveillance.facilities import facility_search_url
 from hisi.utils import OFFICER_ROLE
 
 CATEGORIES = ("Claim", "Patient visit", "Overall facility")
@@ -601,28 +603,37 @@ def list_officers():
 @rate_limit(limit=120, seconds=60)
 @api_endpoint
 def search_facilities(term):
-	"""Type-ahead over the registered facility list (local HISI Health
-	Facility rows) for the wizard's scope step."""
+	"""Type-ahead over the live DHA facility register (the same HWR
+	``Health Facility`` resource the mandate flow searches) for the
+	wizard's scope step. Each register row carries the name plus the
+	county and level the picker shows beside it."""
 	user = frappe.session.user
 	common.scope_kind(user)
 	term = str(term or "").strip()
 	if len(term) < 2:
 		return APIResponse.success(data={"facilities": [], "total": 0})
-	rows = frappe.get_all(
-		"HISI Health Facility",
-		filters={"name": ["like", "%{}%".format(term)]},
-		fields=["name", "county", "level", "operational_status"],
-		order_by="name asc",
-		limit=20,
-	)
+	if len(term) > 100:
+		raise BadRequest("The search term is too long ({} characters).".format(len(term)))
+	params = {
+		"filters": json.dumps([["facility_name", "like", "%{}%".format(term)]]),
+		"fields": json.dumps(["*"]),
+		"order_by": "facility_name asc",
+		"limit_page_length": 20,
+		"limit_start": 0,
+	}
+	payload = http_get(facility_search_url(), params)
+	rows = payload.get("data") if isinstance(payload, dict) else payload
+	if not isinstance(rows, list):
+		rows = []
 	facilities = [
 		{
-			"facility_name": row.name,
-			"county": row.county,
-			"level": row.level,
-			"operational_status": row.operational_status,
+			"facility_name": row.get("facility_name"),
+			"county": row.get("county") or None,
+			"level": row.get("facility_level") or None,
+			"operational_status": row.get("operational_status") or None,
 		}
 		for row in rows
+		if isinstance(row, dict) and row.get("facility_name")
 	]
 	return APIResponse.success(data={"facilities": facilities, "total": len(facilities)})
 
