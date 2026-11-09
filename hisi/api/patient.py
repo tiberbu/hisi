@@ -74,6 +74,10 @@ class PatientFlowData(BaseModel):
     results: dict
     steps: list
     cr_id: str | None
+    # Per-step failures (step name -> reason). A failed step never sinks the
+    # other steps: the response succeeds with the steps that worked in
+    # `results` and the failed ones listed here.
+    errors: dict = {}
 
 def settings_doc():
     return frappe.get_doc("HISI Settings")
@@ -86,6 +90,18 @@ def simulation_base_url() -> str:
     if not value:
         raise BadRequest("HISI Settings uat_base_url is not configured.")
     return value
+
+def dha_origin() -> str:
+    """DHA origin for the active mode: the UAT base when simulation mode is
+    enabled, otherwise the production base_url. The auth headers are
+    unchanged by the switch — UAT and production use the same credentials."""
+    doc = settings_doc()
+    if doc.get("enable_uat_simulation"):
+        return simulation_base_url()
+    origin = (doc.get("base_url") or "").strip()
+    if not origin:
+        raise BadRequest("HISI Settings base_url is not configured.")
+    return origin
 
 def upstream_timeout_seconds() -> int:
     value = settings_doc().get("upstream_api_timeout")
@@ -147,38 +163,76 @@ def dha_jwt() -> str:
     signature = base64url_encode(hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest())
     return "{}.{}.{}".format(header, payload, signature)
 
-def request_headers(bearer: bool) -> dict:
+def request_headers(bearer: bool = True, basic: str = "") -> dict:
+    if basic:
+        return {"Authorization": "Basic " + basic}
     return {"Authorization": "Bearer " + dha_jwt()} if bearer else {}
 
-def http_get(url: str, params: dict, bearer: bool = True) -> dict:
-    try:
-        response = requests.get(url, params=params, headers=request_headers(bearer), timeout=upstream_timeout_seconds())
-        response.raise_for_status()
-    except requests.exceptions.Timeout:
-        raise UpstreamError("Upstream request timed out.")
-    except requests.exceptions.HTTPError as e:
-        raise UpstreamError("Upstream request failed with HTTP {}.".format(getattr(e.response, "status_code", "error")))
-    except requests.exceptions.RequestException:
-        raise UpstreamError("Upstream request failed.")
-    try:
-        return response.json()
-    except ValueError:
-        raise UpstreamError("Upstream returned a non-JSON response.")
+def dha_basic_credentials() -> str:
+    doc = settings_doc()
+    username = (doc.get("username") or "").strip()
+    password = doc.get_password("password") or ""
+    if not username or not password:
+        raise BadRequest("HISI Settings username / password are not configured.")
+    return base64.b64encode("{}:{}".format(username, password).encode("utf-8")).decode("ascii")
+
+UPSTREAM_RETRY_ATTEMPTS = 3
+UPSTREAM_RETRYABLE_STATUSES = (404, 500, 502, 503, 504)
+UPSTREAM_RETRY_BACKOFF_SECONDS = 0.5
+
+def _upstream_retry(attempt: int, response=None) -> bool:
+    """Whether a failed DHA request should be retried. The UAT origin flaps
+    individual routes to "404 Route Not Found" and back to 200, so a
+    retryable status (404/5xx) — or a timeout — is retried with a short
+    backoff before surfacing as an error. Anything else (400, 401, ...)
+    fails immediately."""
+    if attempt + 1 >= UPSTREAM_RETRY_ATTEMPTS:
+        return False
+    status = getattr(response, "status_code", None)
+    if status is not None and status not in UPSTREAM_RETRYABLE_STATUSES:
+        return False
+    time.sleep(UPSTREAM_RETRY_BACKOFF_SECONDS * (attempt + 1))
+    return True
+
+def http_get(url: str, params: dict, bearer: bool = True, basic: str = "") -> dict:
+    for attempt in range(UPSTREAM_RETRY_ATTEMPTS):
+        try:
+            response = requests.get(url, params=params, headers=request_headers(bearer, basic), timeout=upstream_timeout_seconds())
+            response.raise_for_status()
+            try:
+                return response.json()
+            except ValueError:
+                raise UpstreamError("Upstream returned a non-JSON response.")
+        except requests.exceptions.Timeout:
+            if _upstream_retry(attempt):
+                continue
+            raise UpstreamError("Upstream request timed out.")
+        except requests.exceptions.HTTPError as e:
+            if _upstream_retry(attempt, e.response):
+                continue
+            raise UpstreamError("Upstream request failed with HTTP {}.".format(getattr(e.response, "status_code", "error")))
+        except requests.exceptions.RequestException:
+            raise UpstreamError("Upstream request failed.")
 
 def http_post(url: str, body: dict, bearer: bool = True) -> dict:
-    try:
-        response = requests.post(url, json=body, headers=request_headers(bearer), timeout=upstream_timeout_seconds())
-        response.raise_for_status()
-    except requests.exceptions.Timeout:
-        raise UpstreamError("Upstream request timed out.")
-    except requests.exceptions.HTTPError as e:
-        raise UpstreamError("Upstream request failed with HTTP {}.".format(getattr(e.response, "status_code", "error")))
-    except requests.exceptions.RequestException:
-        raise UpstreamError("Upstream request failed.")
-    try:
-        return response.json()
-    except ValueError:
-        raise UpstreamError("Upstream returned a non-JSON response.")
+    for attempt in range(UPSTREAM_RETRY_ATTEMPTS):
+        try:
+            response = requests.post(url, json=body, headers=request_headers(bearer), timeout=upstream_timeout_seconds())
+            response.raise_for_status()
+            try:
+                return response.json()
+            except ValueError:
+                raise UpstreamError("Upstream returned a non-JSON response.")
+        except requests.exceptions.Timeout:
+            if _upstream_retry(attempt):
+                continue
+            raise UpstreamError("Upstream request timed out.")
+        except requests.exceptions.HTTPError as e:
+            if _upstream_retry(attempt, e.response):
+                continue
+            raise UpstreamError("Upstream request failed with HTTP {}.".format(getattr(e.response, "status_code", "error")))
+        except requests.exceptions.RequestException:
+            raise UpstreamError("Upstream request failed.")
 
 AWS_SERVICE = "healthlake"
 EMPTY_PAYLOAD_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -859,7 +913,33 @@ def enrich_fhir_records(records: list) -> list:
         enriched.append(record)
     return enriched
 
-def fetch_patient_records(visit_id: str) -> list:
+def _encounter_facility_refs(encounter: dict) -> list:
+    """The facility references an Encounter reveals: its serviceProvider plus
+    any location[].organization, as raw reference strings (the reference is
+    fetched by id, since the visit-scoped search returns only the reference)."""
+    refs = []
+    provider = encounter.get("serviceProvider")
+    if isinstance(provider, dict) and _text(provider.get("reference")):
+        refs.append(provider["reference"])
+    for location in encounter.get("location") or []:
+        org = location.get("organization") if isinstance(location, dict) else None
+        if isinstance(org, dict) and _text(org.get("reference")):
+            refs.append(org["reference"])
+    return refs
+
+def fetch_organization_by_id(org_id: str, host: str, access_key: str, secret_key: str, region: str, data_store_id: str) -> dict:
+    """One Organization resource by id; the facility name and type live on
+    the resource itself. The by-id GET returns a bare resource (not a
+    bundle); an empty dict means the reference could not be resolved."""
+    path = "/datastore/{}/r4/Organization/{}".format(data_store_id, org_id)
+    payload = aws_get(path, [], host, access_key, secret_key, region)
+    if not isinstance(payload, dict):
+        return {}
+    if isinstance(payload.get("resource"), dict):
+        return payload["resource"]
+    return payload if _text(payload.get("resourceType")) == "Organization" else {}
+
+def fetch_patient_records(visit_id: str, org_cache: dict = None) -> list:
     visit_id = str(visit_id or "").strip()
     if not visit_id:
         raise BadRequest("A visit_id is required to fetch patient records.")
@@ -871,7 +951,93 @@ def fetch_patient_records(visit_id: str) -> list:
         key = str(row.get("param_key") or "").strip()
         if key:
             params.append((key, str(row.get("param_value") or "").strip()))
-    return enrich_fhir_records(parse_fhir_bundle(aws_get(path, params, host, access_key, secret_key, region)))
+    records = parse_fhir_bundle(aws_get(path, params, host, access_key, secret_key, region))
+    # The visit-scoped search returns the Encounter with only a facility
+    # reference; resolve it to the full Organization so the visit's bucket
+    # carries the facility the journey UI renders (and the ambulance on an
+    # EMS encounter, which the UI reports as the responding unit).
+    cache = org_cache if org_cache is not None else {}
+    facility = []
+    added = set()
+    for record in records:
+        if not isinstance(record, dict) or _text(record.get("resourceType")) != "Encounter":
+            continue
+        for reference in _encounter_facility_refs(record):
+            org_id = _visit_reference_id(reference)
+            if not org_id or org_id in added:
+                continue
+            if org_id not in cache:
+                try:
+                    cache[org_id] = fetch_organization_by_id(org_id, host, access_key, secret_key, region, data_store_id)
+                except UpstreamError:
+                    cache[org_id] = {}
+            if cache[org_id]:
+                added.add(org_id)
+                facility.append(cache[org_id])
+    return enrich_fhir_records(records + facility)
+
+def mpi_id_resolution_path() -> str:
+    value = (settings_doc().get("mpi_id_resolution") or "").strip()
+    if not value:
+        raise BadRequest("HISI Settings mpi_id_resolution is not configured.")
+    return value
+
+def parse_mpi_patient(payload) -> dict:
+    """MPI patient envelope: data.patient.data holds cr_id / mpi_id / shr_id."""
+    if not isinstance(payload, dict):
+        return {}
+    data = payload.get("data")
+    if isinstance(data, dict):
+        patient = data.get("patient")
+        if isinstance(patient, dict) and isinstance(patient.get("data"), dict):
+            return patient["data"]
+    return {}
+
+def resolve_shr_patient_id(cr_id: str) -> str:
+    """CR ID -> SHR patient id via the configured DHA MPI resolution endpoint;
+    the SHR id keys the patient-level FHIR fetches (subject/patient refs).
+    UAT simulation mode routes the call to the UAT origin, otherwise the
+    production base_url; the call is authorized with HTTP Basic
+    (settings username/password) — the MPI endpoints reject the JWT bearer."""
+    cr_id = str(cr_id or "").strip()
+    if not cr_id:
+        return ""
+    origin = dha_origin()
+    record = parse_mpi_patient(http_get(join_url(origin, mpi_id_resolution_path()), {"cr_id": cr_id}, basic=dha_basic_credentials()))
+    return str(record.get("shr_id") or "").strip()
+
+def fetch_patient_level_records(shr_id: str, cr_id: str = "") -> tuple:
+    """Patient-level FHIR fetches keyed on the patient reference rather than a
+    visit id: one signed search per configured resource type and per
+    identifier value (the resolved SHR id plus the CR id as-is, so records
+    keyed on either identifier are found). The param name (subject/patient/...)
+    varies per resource row."""
+    access_key, secret_key, region, data_store_id = aws_credentials()
+    host = "healthlake.{}.amazonaws.com".format(region)
+    values = []
+    for value in (str(shr_id or "").strip(), str(cr_id or "").strip()):
+        if value and value not in values:
+            values.append(value)
+    by_resource = {}
+    errors = {}
+    for row in settings_doc().get("patient_resources") or []:
+        param_key = str(row.get("patient_param") or "").strip() or "subject"
+        resource_types = [
+            part.strip() for part in str(row.get("resource_type") or "").replace("\n", ",").split(",") if part.strip()
+        ]
+        for resource_type in resource_types:
+            path = "/datastore/{}/r4/{}".format(data_store_id, resource_type)
+            for value in values:
+                try:
+                    records = parse_fhir_bundle(aws_get(path, [(param_key, value)], host, access_key, secret_key, region))
+                except UpstreamError as exc:
+                    errors[resource_type] = str(exc)
+                    continue
+                by_resource.setdefault(resource_type, []).extend(records)
+    return by_resource, errors
+
+def _record_dedupe_key(record: dict) -> tuple:
+    return (_text(record.get("resourceType")), _text(record.get("id")))
 
 def parse_records(payload) -> list:
     if isinstance(payload, list):
@@ -1032,9 +1198,9 @@ def dependants_summary(patient: dict) -> list:
 
 def step_patient(filters: dict) -> dict:
     doc = settings_doc()
-    base_url = (doc.get("base_url") or "").strip()
+    origin = dha_origin()
     path = (doc.get("fetch_client") or "").strip()
-    if not base_url or not path:
+    if not path:
         raise BadRequest("HISI Settings base_url / fetch_client are not configured.")
     identification_type = str(filters.get("identification_type") or "").strip()
     identification_number = str(filters.get("identification_number") or "").strip()
@@ -1046,7 +1212,7 @@ def step_patient(filters: dict) -> dict:
     else:
         payload = {"identification_type": identification_type, "identification_number": identification_number}
     params = {"payload": json.dumps(payload)}
-    patients = parse_records(http_get(join_url(base_url, path), params))
+    patients = parse_records(http_get(join_url(origin, path), params))
     if not patients:
         raise NotFound("No patient found for the given identifier.")
     patient = patients[0]
@@ -1058,9 +1224,9 @@ def step_patient(filters: dict) -> dict:
 
 def step_eligibility(cr_id: str, filters: dict) -> dict:
     doc = settings_doc()
-    base_url = (doc.get("base_url") or "").strip()
+    origin = dha_origin()
     path = (doc.get("eligibility_check") or "").strip()
-    if not base_url or not path:
+    if not path:
         raise BadRequest("HISI Settings base_url / eligibility_check are not configured.")
     request_id_type = filters.get("requestIdType")
     request_id_number = filters.get("requestIdNumber")
@@ -1081,7 +1247,7 @@ def step_eligibility(cr_id: str, filters: dict) -> dict:
             else:
                 raise BadRequest("The eligibility step needs requestIdType + requestIdNumber, a cr_id filter, or identification_type + identification_number.")
     body = {"requestIdType": int(request_id_type), "requestIdNumber": str(request_id_number)}
-    return parse_eligibility(http_post(join_url(base_url, path), body))
+    return parse_eligibility(http_post(join_url(origin, path), body))
 
 def step_consent(cr_id: str) -> dict:
     params = {
@@ -1089,15 +1255,10 @@ def step_consent(cr_id: str) -> dict:
         "fields": json.dumps(CONSENT_FIELDS),
     }
     doc = settings_doc()
-    if doc.get("enable_uat_simulation"):
-        # Simulation mode: the UAT CMP accepts the call unauthenticated.
-        origin, bearer = simulation_base_url(), False
-    else:
-        origin = (doc.get("base_url") or "").strip()
-        if not origin:
-            raise BadRequest("HISI Settings base_url is not configured.")
-        # Production DHA origin: the usual JWT bearer applies.
-        bearer = True
+    origin = dha_origin()
+    # Simulation mode: the UAT CMP accepts the call unauthenticated;
+    # production keeps the usual JWT bearer.
+    bearer = not doc.get("enable_uat_simulation")
     records = [
         record
         for record in parse_records(http_get(join_url(origin, consent_resource_path()), params, bearer=bearer))
@@ -1115,7 +1276,7 @@ def step_preauth(cr_id: str) -> dict:
     # Each preauth is enriched with its linked Procedure Records (the
     # procedure lookup is keyed by the preauth's claim id).
     path = med_preauth_procedure_search_path()
-    origin = (settings_doc().get("base_url") or "").strip()
+    origin = dha_origin()
     for index, record in enumerate(records):
         if index >= MAX_PREAUTH_PROCEDURE_LOOKUPS:
             record["procedures"] = []
@@ -1139,15 +1300,11 @@ def step_preauth(cr_id: str) -> dict:
     return {"records": records}
 
 def med_claim_records(path: str, cr_id: str) -> list:
-    # Live DHA claim registry (med claims / med preauths): production
-    # origin with the usual JWT bearer, filtered to the client.
     params = {
         "filters": json.dumps([["client", "=", cr_id]]),
         "fields": json.dumps(CLAIM_FIELDS),
     }
-    origin = (settings_doc().get("base_url") or "").strip()
-    if not origin:
-        raise BadRequest("HISI Settings base_url is not configured.")
+    origin = dha_origin()
     return [
         record
         for record in parse_records(http_get(join_url(origin, path), params, bearer=True))
@@ -1160,34 +1317,178 @@ def step_records(visit_id: str) -> dict:
         raise BadRequest("A visit_id is required for the records step: pass a visit_id filter or include the consent step.")
     return {"visit_id": visit_id, "records": fetch_patient_records(visit_id)}
 
-MAX_RECORD_VISITS = 5
+def _visit_reference_id(reference: str) -> str:
+    reference = reference.strip()
+    return reference.rsplit("/", 1)[-1] if reference else ""
 
-def step_records_multi(filters: dict, results: dict) -> dict:
-    """Fetch the revealed FHIR records for every consented visit (capped),
-    keeping the legacy single-visit shape (visit_id + records) for the first
-    visit so existing clients keep working."""
+def _first_reference_id(value) -> str:
+    """A FHIR reference field as upstream sends it: a single Reference
+    object, or a 0..N array of them (episodeOfCare arrives as a one-item
+    list). Returns the referenced resource's id, or '' when absent."""
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if isinstance(value, dict):
+        return _visit_reference_id(_text(value.get("reference")))
+    return ""
+
+def _assign_patient_records_to_visits(by_visit: dict, by_resource: dict) -> dict:
+    """Fold patient-level records into their visit buckets so the journey
+    UI renders them: the per-visit fetch reveals only the visit's
+    Encounter, while diagnosis and medication records reference the visit
+    through that encounter and arrive via the patient-level fetch. A
+    record's visit is resolved from its own episodeOfCare reference, or
+    from the episodeOfCare of the Encounter it references (looked up
+    across both the patient-level records and the existing buckets)."""
+    patient_records = []
+    pool = []
+    for records in by_resource.values():
+        if isinstance(records, list):
+            for record in records:
+                if isinstance(record, dict):
+                    patient_records.append(record)
+                    pool.append(record)
+    for records in by_visit.values():
+        if isinstance(records, list):
+            pool.extend(record for record in records if isinstance(record, dict))
+    encounters = {}
+    for record in pool:
+        if _text(record.get("resourceType")) == "Encounter" and _text(record.get("id")):
+            encounters[_text(record.get("id"))] = record
+
+    def visit_id_of(record: dict) -> str:
+        visit = _first_reference_id(record.get("episodeOfCare"))
+        if visit:
+            return visit
+        encounter = record.get("encounter")
+        if isinstance(encounter, dict):
+            linked = encounters.get(_visit_reference_id(_text(encounter.get("reference"))))
+            if isinstance(linked, dict):
+                return _first_reference_id(linked.get("episodeOfCare"))
+        return ""
+
+    for record in patient_records:
+        visit = visit_id_of(record)
+        if not visit:
+            continue
+        bucket = by_visit.setdefault(visit, [])
+        key = _record_dedupe_key(record)
+        if any(_record_dedupe_key(existing) == key for existing in bucket):
+            continue
+        bucket.append(record)
+    return by_visit
+
+def _attach_visit_facilities(by_visit: dict, org_cache: dict) -> None:
+    """Resolve the facility Organization into every visit bucket, after the
+    patient-level fold: the visit-scoped fetch only resolves the facilities
+    of the visits it searched, and the encounters that arrive via the
+    patient-level fetch still carry only the facility reference. A shared
+    cache avoids re-fetching an Organization already resolved for another
+    visit; buckets that already carry the Organization (patient-level fetch,
+    earlier visit) are skipped."""
+    pending = []
+    for visit, records in by_visit.items():
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, dict) or _text(record.get("resourceType")) != "Encounter":
+                continue
+            for reference in _encounter_facility_refs(record):
+                org_id = _visit_reference_id(reference)
+                if not org_id:
+                    continue
+                present = any(
+                    _record_dedupe_key(existing) == ("Organization", org_id) for existing in records if isinstance(existing, dict)
+                )
+                if not present:
+                    pending.append((records, org_id))
+    if not pending:
+        return
+    access_key, secret_key, region, data_store_id = aws_credentials()
+    host = "healthlake.{}.amazonaws.com".format(region)
+    seen = set()
+    for records, org_id in pending:
+        marker = (id(records), org_id)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        if org_id not in org_cache:
+            try:
+                org_cache[org_id] = fetch_organization_by_id(org_id, host, access_key, secret_key, region, data_store_id)
+            except UpstreamError:
+                org_cache[org_id] = {}
+        if org_cache[org_id]:
+            # enrich on append (the visit-scoped path enriches its whole
+            # list at once; the journey UI reads the curated headline).
+            records.append(enrich_fhir_records([org_cache[org_id]])[0])
+
+def step_records_multi(filters: dict, results: dict, cr_id: str = "") -> dict:
+    # The visit_id filter accepts a comma-separated list so a records-only
+    # call (the timeline lazy-loads consent first, then records with the
+    # consented visits) can carry every consented visit in one request;
+    # every listed visit is fetched — there is no visit cap.
     visit_ids = []
-    explicit = str(filters.get("visit_id") or "").strip()
-    if explicit:
-        visit_ids.append(explicit)
+    for visit in str(filters.get("visit_id") or "").split(","):
+        visit = visit.strip()
+        if visit and visit not in visit_ids:
+            visit_ids.append(visit)
     for record in (results.get(STEP_CONSENT) or {}).get("records") or []:
         candidate = str(record.get("visit_id") or "").strip()
         if candidate and candidate not in visit_ids:
             visit_ids.append(candidate)
-    visit_ids = visit_ids[:MAX_RECORD_VISITS]
     by_visit = {}
     errors = {}
+    org_cache = {}
     for candidate in visit_ids:
         try:
-            by_visit[candidate] = fetch_patient_records(candidate)
+            by_visit[candidate] = fetch_patient_records(candidate, org_cache)
         except UpstreamError as exc:
             by_visit[candidate] = []
             errors[candidate] = str(exc)
+    configured_resources = [
+        row for row in settings_doc().get("patient_resources") or [] if str(row.get("resource_type") or "").strip()
+    ]
+    by_resource = {}
+    shr_id = ""
+    if str(cr_id or "").strip() and configured_resources:
+        try:
+            shr_id = resolve_shr_patient_id(cr_id)
+        except UpstreamError as exc:
+            errors["shr"] = str(exc)
+        by_resource, resource_errors = fetch_patient_level_records(shr_id, cr_id)
+        errors.update(resource_errors)
+    merged = []
+    seen = set()
+    for candidate in visit_ids:
+        for record in by_visit.get(candidate) or []:
+            if not isinstance(record, dict):
+                continue
+            key = _record_dedupe_key(record)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(record)
+    by_resource_deduped = {}
+    for resource_type, records in by_resource.items():
+        fresh = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            key = _record_dedupe_key(record)
+            if key in seen:
+                continue
+            seen.add(key)
+            fresh.append(record)
+            merged.append(record)
+        by_resource_deduped[resource_type] = enrich_fhir_records(fresh)
+    by_visit = _assign_patient_records_to_visits(by_visit, by_resource_deduped)
+    _attach_visit_facilities(by_visit, org_cache)
     first = visit_ids[0] if visit_ids else ""
     return {
         "visit_id": first,
-        "records": by_visit.get(first, []),
+        "records": merged,
         "by_visit": by_visit,
+        "by_resource": by_resource_deduped,
+        "shr_id": shr_id,
         "errors": errors,
     }
 
@@ -1351,22 +1652,33 @@ def patient_flow(data: str | dict = "") -> dict:
             raise BadRequest("A cr_id filter is required when the patient step is not included.")
         results = {}
 
+    errors = {}
+
+    def run_step(step, fn):
+        # A failing step must not affect the subsequent ones: its error is
+        # recorded per-step and the flow continues with the rest.
+        try:
+            results[step] = fn()
+        except (UpstreamError, BadRequest) as exc:
+            errors[step] = exc.message or str(exc)
+
     if STEP_ELIGIBILITY in steps:
-        results[STEP_ELIGIBILITY] = step_eligibility(cr_id, filters)
+        run_step(STEP_ELIGIBILITY, lambda: step_eligibility(cr_id, filters))
     if STEP_CONSENT in steps:
-        results[STEP_CONSENT] = step_consent(cr_id)
+        run_step(STEP_CONSENT, lambda: step_consent(cr_id))
     if STEP_CONTRIBUTIONS in steps:
-        results[STEP_CONTRIBUTIONS] = fetch_patient_contributions(cr_id)
+        run_step(STEP_CONTRIBUTIONS, lambda: fetch_patient_contributions(cr_id))
     if STEP_CLAIMS in steps:
-        results[STEP_CLAIMS] = step_claims(cr_id)
+        run_step(STEP_CLAIMS, lambda: step_claims(cr_id))
     if STEP_PREAUTH in steps:
-        results[STEP_PREAUTH] = step_preauth(cr_id)
+        run_step(STEP_PREAUTH, lambda: step_preauth(cr_id))
     if STEP_RECORDS in steps:
-        results[STEP_RECORDS] = step_records_multi(filters, results)
+        run_step(STEP_RECORDS, lambda: step_records_multi(filters, results, cr_id))
 
     payload = PatientFlowData(
         results=results,
         steps=steps,
         cr_id=cr_id,
+        errors=errors,
     )
     return APIResponse.success(data=payload.model_dump(mode="json"))
