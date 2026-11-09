@@ -138,11 +138,15 @@ class TestPatientFlow(IntegrationTestCase):
             fetch_patient_consent="/v1/cmp/resource/Visit Consent",
             consumer_key="KEY",
             consumer_secret="SECRET",
+            username="USER",
+            password="PASS",
             upstream_api_timeout=60,
             jwt_ttl_s=60,
             uat_base_url="https://uat.dha.go.ke",
             enable_uat_simulation=1,
             data_source="API",
+            mpi_id_resolution="",
+            patient_resources=[],
         )
 
     def run_flow(self, steps, filters=None):
@@ -157,7 +161,7 @@ class TestPatientFlow(IntegrationTestCase):
             self.run_flow(["patient", "eligibility", "consent"], {"identification_type": "CR ID", "identification_number": "CR2473157541615-8"})
         self.assertEqual(mock_get.call_count, 2)
         patient_call, consent_call = mock_get.call_args_list
-        self.assertEqual(patient_call.args[0], "https://api.dha.go.ke/client-registry/fetch-client")
+        self.assertEqual(patient_call.args[0], "https://uat.dha.go.ke/client-registry/fetch-client")
         patient_params = patient_call.kwargs["params"]
         self.assertEqual(
             json.loads(patient_params["payload"]),
@@ -165,7 +169,7 @@ class TestPatientFlow(IntegrationTestCase):
         )
         self.assertIn("Authorization", patient_call.kwargs["headers"])
         self.assertEqual(mock_post.call_count, 1)
-        self.assertEqual(mock_post.call_args.args[0], "https://api.dha.go.ke/backend/api/v5/coverage/validate")
+        self.assertEqual(mock_post.call_args.args[0], "https://uat.dha.go.ke/backend/api/v5/coverage/validate")
         self.assertEqual(
             mock_post.call_args.kwargs["json"],
             {"requestIdType": 3, "requestIdNumber": "CR2473157541615-8"},
@@ -217,7 +221,7 @@ class TestPatientFlow(IntegrationTestCase):
         with patch.object(patient.requests, "post", return_value=http_response({"status": "Active"})) as mock_post:
             self.run_flow(["eligibility"], {"cr_id": "CR1"})
         self.assertEqual(mock_post.call_count, 1)
-        self.assertEqual(mock_post.call_args.args[0], "https://api.dha.go.ke/backend/api/v5/coverage/validate")
+        self.assertEqual(mock_post.call_args.args[0], "https://uat.dha.go.ke/backend/api/v5/coverage/validate")
         self.assertEqual(mock_post.call_args.kwargs["json"], {"requestIdType": 3, "requestIdNumber": "CR1"})
         self.assertEqual(frappe.local.response.get("data")["cr_id"], "CR1")
         self.assertNotIn("patient", frappe.local.response.get("data")["results"])
@@ -334,18 +338,24 @@ class TestPatientFlow(IntegrationTestCase):
         self.assertEqual(records[0]["visit_id"], "b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca")
 
     def test_consent_requires_uat_base_url(self):
+        # A consent config error is isolated to the consent step; the flow
+        # still succeeds with the failure recorded per-step.
         self.set_settings(uat_base_url="")
         self.run_flow(["consent"], {"cr_id": "CR1"})
         response = frappe.local.response
-        self.assertEqual(response.get("code"), "BAD_REQUEST")
-        self.assertIn("uat_base_url", response.get("message"))
+        self.assertEqual(response.get("status"), "success")
+        data = response.get("data")
+        self.assertNotIn("consent", data["results"])
+        self.assertIn("uat_base_url", data["errors"]["consent"])
 
     def test_consent_requires_fetch_patient_consent(self):
         self.set_settings(fetch_patient_consent="")
         self.run_flow(["consent"], {"cr_id": "CR1"})
         response = frappe.local.response
-        self.assertEqual(response.get("code"), "BAD_REQUEST")
-        self.assertIn("fetch_patient_consent", response.get("message"))
+        self.assertEqual(response.get("status"), "success")
+        data = response.get("data")
+        self.assertNotIn("consent", data["results"])
+        self.assertIn("fetch_patient_consent", data["errors"]["consent"])
 
     def test_no_patient_step_requires_cr_id(self):
         self.run_flow(["eligibility"], {})
@@ -419,9 +429,9 @@ class TestPatientFlow(IntegrationTestCase):
         with patch.object(patient.requests, "get", return_value=http_response(claim_payload())) as mock_get:
             self.run_flow(["claims"], {"cr_id": "CR1"})
         call = mock_get.call_args
-        # The claims step always runs against the production origin with the
-        # JWT bearer (no UAT simulation), on the configured med claim path.
-        self.assertEqual(call.args[0], "https://api.dha.go.ke/v1/med/resource/Claim Record")
+        # The claims step follows the active origin — UAT under simulation
+        # mode here — with the JWT bearer, on the configured med claim path.
+        self.assertEqual(call.args[0], "https://uat.dha.go.ke/v1/med/resource/Claim Record")
         self.assertEqual(json.loads(call.kwargs["params"]["filters"]), [["client", "=", "CR1"]])
         self.assertEqual(json.loads(call.kwargs["params"]["fields"]), patient.CLAIM_FIELDS)
         self.assertTrue(call.kwargs["headers"]["Authorization"].startswith("Bearer "))
@@ -433,7 +443,7 @@ class TestPatientFlow(IntegrationTestCase):
         with patch.object(patient.requests, "get", side_effect=[http_response(claim_payload()), http_response({"data": []})]) as mock_get:
             self.run_flow(["preauth"], {"cr_id": "CR1"})
         call = mock_get.call_args_list[0]
-        self.assertEqual(call.args[0], "https://api.dha.go.ke/v1/preauth/resource/Claim Record")
+        self.assertEqual(call.args[0], "https://uat.dha.go.ke/v1/preauth/resource/Claim Record")
         self.assertEqual(json.loads(call.kwargs["params"]["filters"]), [["client", "=", "CR1"]])
         self.assertTrue(call.kwargs["headers"]["Authorization"].startswith("Bearer "))
         records = frappe.local.response.get("data")["results"]["preauth"]["records"]
@@ -460,7 +470,7 @@ class TestPatientFlow(IntegrationTestCase):
         procedure_call = mock_get.call_args_list[1]
         # The procedure lookup targets the configured preauth procedure path,
         # keyed by the preauth record's claim id (its document name).
-        self.assertEqual(procedure_call.args[0], "https://api.dha.go.ke/v1/preauth/resource/Procedure Record")
+        self.assertEqual(procedure_call.args[0], "https://uat.dha.go.ke/v1/preauth/resource/Procedure Record")
         self.assertEqual(json.loads(procedure_call.kwargs["params"]["filters"]), [["claim_id", "=", "59f53f79-b25f-4994-8e40-4a94bf1cf667"]])
         self.assertEqual(json.loads(procedure_call.kwargs["params"]["fields"]), patient.PROCEDURE_FIELDS)
         record = frappe.local.response.get("data")["results"]["preauth"]["records"][0]
@@ -490,6 +500,39 @@ class TestPatientFlow(IntegrationTestCase):
         with patch.object(patient.requests, "get", return_value=response):
             self.run_flow(["patient"], {"identification_type": "CR ID", "identification_number": "CR1"})
         self.assertEqual(frappe.local.response.get("code"), "UPSTREAM_ERROR")
+
+    def test_failed_step_isolated_per_step(self):
+        # A failing claims/preauth step must not sink consent/eligibility:
+        # the flow succeeds, the failed steps land in `errors`.
+        elig = http_response({"message": {"status": "Active", "scheme": "SHIF"}})
+        with patch.object(patient.requests, "get", side_effect=[http_response(consent_payload()), http_response(None, status_code=400), http_response(None, status_code=400)]) as mock_get, patch.object(
+            patient.requests, "post", return_value=elig
+        ):
+            self.run_flow(["consent", "eligibility", "claims", "preauth"], {"cr_id": "CR2473157541615-8"})
+        response = frappe.local.response
+        self.assertEqual(response.get("status"), "success")
+        self.assertEqual(response.get("http_status_code"), 200)
+        data = response.get("data")
+        self.assertIn("consent", data["results"])
+        self.assertIn("eligibility", data["results"])
+        self.assertNotIn("claims", data["results"])
+        self.assertNotIn("preauth", data["results"])
+        self.assertIn("claims", data["errors"])
+        self.assertIn("preauth", data["errors"])
+        self.assertIn("400", data["errors"]["claims"])
+        self.assertIn("400", data["errors"]["preauth"])
+
+    def test_transient_upstream_404_retried_then_succeeds(self):
+        # UAT flaps routes to "404 Route Not Found" and back to 200: the
+        # first two 404s are retried and the third attempt's 200 wins.
+        with patch.object(patient.requests, "get", side_effect=[http_response(None, status_code=404), http_response(None, status_code=404), http_response({"data": []})]) as mock_get:
+            self.run_flow(["claims"], {"cr_id": "CR2473157541615-8"})
+        response = frappe.local.response
+        self.assertEqual(response.get("status"), "success")
+        data = response.get("data")
+        self.assertEqual(data["results"]["claims"]["records"], [])
+        self.assertEqual(data["errors"], {})
+        self.assertEqual(mock_get.call_count, 3)
 
     def test_missing_credentials(self):
         self.set_settings(consumer_key="")
@@ -548,11 +591,290 @@ class TestPatientFlow(IntegrationTestCase):
         self.assertIn("episode-of-care=b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca", mock_get.call_args_list[1].args[0])
         self.assertEqual(frappe.local.response.get("data")["results"]["records"]["visit_id"], "b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca")
 
+    def test_records_step_fetches_every_comma_listed_visit(self):
+        # The lazy timeline sends a records-only call with every consented
+        # visit comma-separated: every listed visit is fetched, no cap.
+        self.set_aws_settings()
+        visits = ["v-1", "v-2", "v-3", "v-4", "v-5", "v-6"]
+        with patch.object(patient.requests, "get", return_value=http_response(self.fhir_records_bundle())) as mock_get:
+            self.run_flow(["records"], {"visit_id": ",".join(visits)})
+        self.assertEqual(mock_get.call_count, len(visits))
+        for visit in visits:
+            self.assertTrue(any("episode-of-care={}".format(visit) in call.args[0] for call in mock_get.call_args_list))
+        data = frappe.local.response.get("data")
+        self.assertEqual(data["results"]["records"]["visit_id"], visits[0])
+        self.assertEqual(sorted(data["results"]["records"]["by_visit"]), sorted(visits))
+
     def test_records_step_requires_visit_id(self):
         self.run_flow(["records"], {})
         response = frappe.local.response
         self.assertEqual(response.get("code"), "BAD_REQUEST")
         self.assertIn("visit_id", response.get("message"))
+
+    def mpi_payload(self, shr_id="KE-SHRP-8B626E2B-2B15-4C93-9735"):
+        return {
+            "status": "success",
+            "message": "Success",
+            "status_code": 200,
+            "data": {
+                "patient": {
+                    "status": "success",
+                    "message": "MPI record found.",
+                    "data": {"cr_id": "CR1", "mpi_id": "KE-MPI-D2AB96DC-8971-409A-8DD4-71431E4E88AB", "shr_id": shr_id},
+                },
+                "facility": None,
+                "practitioner": None,
+            },
+            "pagination": {},
+        }
+
+    def set_patient_resource_settings(self):
+        self.set_settings(
+            mpi_id_resolution="/v1/mpi/patient",
+            patient_resources=[{"resource_type": "Observation", "patient_param": "subject"}],
+        )
+
+    def test_records_step_merges_and_dedupes_patient_level(self):
+        self.set_aws_settings()
+        self.set_patient_resource_settings()
+        visit = {
+            "resourceType": "Bundle",
+            "entry": [
+                {"resource": {"resourceType": "Encounter", "id": "enc-1"}},
+                {"resource": {"resourceType": "Observation", "id": "obs-1"}},
+            ],
+        }
+        observations_by_shr = {
+            "resourceType": "Bundle",
+            "entry": [
+                {"resource": {"resourceType": "Observation", "id": "obs-1"}},
+                {"resource": {"resourceType": "Observation", "id": "obs-2"}},
+            ],
+        }
+        observations_by_cr = {
+            "resourceType": "Bundle",
+            "entry": [
+                {"resource": {"resourceType": "Observation", "id": "obs-2"}},
+                {"resource": {"resourceType": "Observation", "id": "obs-3"}},
+            ],
+        }
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[
+                http_response(visit),
+                http_response(self.mpi_payload()),
+                http_response(observations_by_shr),
+                http_response(observations_by_cr),
+            ],
+        ) as mock_get:
+            self.run_flow(["records"], {"cr_id": "CR1", "visit_id": "v-1"})
+        urls = [call.args[0] for call in mock_get.call_args_list]
+        self.assertIn("episode-of-care=v-1", urls[0])
+        self.assertEqual(urls[1], "https://uat.dha.go.ke/v1/mpi/patient")
+        self.assertEqual(mock_get.call_args_list[1].kwargs["params"], {"cr_id": "CR1"})
+        self.assertEqual(
+            mock_get.call_args_list[1].kwargs["headers"]["Authorization"],
+            "Basic " + base64.b64encode(b"USER:PASS").decode("ascii"),
+        )
+        self.assertTrue(urls[2].endswith("/r4/Observation?subject=KE-SHRP-8B626E2B-2B15-4C93-9735"))
+        self.assertTrue(urls[3].endswith("/r4/Observation?subject=CR1"))
+        data = frappe.local.response.get("data")
+        records = data["results"]["records"]
+        self.assertEqual(records["shr_id"], "KE-SHRP-8B626E2B-2B15-4C93-9735")
+        self.assertEqual(
+            [(r.get("resourceType"), r.get("id")) for r in records["records"]],
+            [
+                ("Encounter", "enc-1"),
+                ("Observation", "obs-1"),
+                ("Observation", "obs-2"),
+                ("Observation", "obs-3"),
+            ],
+        )
+        self.assertEqual([r.get("id") for r in records["by_resource"]["Observation"]], ["obs-2", "obs-3"])
+        self.assertEqual(records["errors"], {})
+
+    def test_records_step_skips_patient_level_without_cr_id(self):
+        self.set_aws_settings()
+        self.set_patient_resource_settings()
+        with patch.object(patient.requests, "get", return_value=http_response(self.fhir_records_bundle())) as mock_get:
+            self.run_flow(["records"], {"visit_id": "v-1"})
+        urls = [call.args[0] for call in mock_get.call_args_list]
+        self.assertEqual(len(urls), 1)
+        self.assertIn("episode-of-care=v-1", urls[0])
+        data = frappe.local.response.get("data")
+        records = data["results"]["records"]
+        self.assertEqual(records["shr_id"], "")
+        self.assertEqual(records["by_resource"], {})
+
+    def test_records_step_patient_level_without_visit(self):
+        self.set_aws_settings()
+        self.set_patient_resource_settings()
+        observations = {
+            "resourceType": "Bundle",
+            "entry": [{"resource": {"resourceType": "Observation", "id": "obs-1"}}],
+        }
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[http_response(self.mpi_payload()), http_response(observations), http_response(observations)],
+        ) as mock_get:
+            self.run_flow(["records"], {"cr_id": "CR1"})
+        urls = [call.args[0] for call in mock_get.call_args_list]
+        self.assertEqual(urls[0], "https://uat.dha.go.ke/v1/mpi/patient")
+        self.assertTrue(urls[1].endswith("/r4/Observation?subject=KE-SHRP-8B626E2B-2B15-4C93-9735"))
+        self.assertTrue(urls[2].endswith("/r4/Observation?subject=CR1"))
+        data = frappe.local.response.get("data")
+        records = data["results"]["records"]
+        self.assertEqual(records["visit_id"], "")
+        self.assertEqual([r.get("id") for r in records["records"]], ["obs-1"])
+
+    def test_records_step_falls_back_to_cr_id_when_shr_missing(self):
+        self.set_aws_settings()
+        self.set_patient_resource_settings()
+        observations = {
+            "resourceType": "Bundle",
+            "entry": [{"resource": {"resourceType": "Observation", "id": "obs-1"}}],
+        }
+        with patch.object(
+            patient.requests, "get", side_effect=[http_response(self.mpi_payload(shr_id="")), http_response(observations)]
+        ) as mock_get:
+            self.run_flow(["records"], {"cr_id": "CR1"})
+        urls = [call.args[0] for call in mock_get.call_args_list]
+        self.assertEqual(urls[0], "https://uat.dha.go.ke/v1/mpi/patient")
+        self.assertTrue(urls[1].endswith("/r4/Observation?subject=CR1"))
+        data = frappe.local.response.get("data")
+        records = data["results"]["records"]
+        self.assertEqual(records["shr_id"], "")
+        self.assertEqual(records["errors"], {})
+        self.assertEqual([r.get("id") for r in records["records"]], ["obs-1"])
+
+    def test_records_step_folds_patient_level_records_into_visit(self):
+        # The visit that actually carries FHIR data is not among the
+        # consent visits the per-visit fetch covers (the records step caps
+        # the visit list). The patient-level records must still reach that
+        # visit's by_visit bucket — the journey UI renders visit cards from
+        # by_visit only, resolving each record's visit through the
+        # Encounter it references.
+        self.set_aws_settings()
+        self.set_settings(
+            mpi_id_resolution="/v1/mpi/patient",
+            patient_resources=[{"resource_type": "Condition,Encounter,MedicationRequest", "patient_param": "subject"}],
+        )
+        empty = {"resourceType": "Bundle", "entry": []}
+        condition = {
+            "resourceType": "Bundle",
+            "entry": [
+                {
+                    "resource": {
+                        "resourceType": "Condition",
+                        "id": "cond-1",
+                        "encounter": {"reference": "Encounter/enc-1"},
+                    }
+                }
+            ],
+        }
+        encounter = {
+            "resourceType": "Bundle",
+            "entry": [
+                {
+                    "resource": {
+                        "resourceType": "Encounter",
+                        "id": "enc-1",
+                        # upstream sends episodeOfCare as a 0..N array
+                        "episodeOfCare": [{"reference": "EpisodeOfCare/v-2"}],
+                    }
+                }
+            ],
+        }
+        medication = {
+            "resourceType": "Bundle",
+            "entry": [
+                {
+                    "resource": {
+                        "resourceType": "MedicationRequest",
+                        "id": "med-1",
+                        "encounter": {"reference": "Encounter/enc-1"},
+                    }
+                }
+            ],
+        }
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[
+                http_response(consent_payload()),  # consent step
+                http_response(empty),  # per-visit fetch for the consent visit (no FHIR data)
+                http_response(self.mpi_payload()),  # MPI resolution
+                http_response(condition),
+                http_response(empty),  # Condition: shr, cr
+                http_response(encounter),
+                http_response(empty),  # Encounter: shr, cr
+                http_response(medication),
+                http_response(empty),  # MedicationRequest: shr, cr
+            ],
+        ):
+            self.run_flow(["consent", "records"], {"cr_id": "CR1"})
+        data = frappe.local.response.get("data")
+        records = data["results"]["records"]
+        self.assertEqual(
+            [(r.get("resourceType"), r.get("id")) for r in records["by_visit"]["v-2"]],
+            [("Condition", "cond-1"), ("Encounter", "enc-1"), ("MedicationRequest", "med-1")],
+        )
+        # A consent visit without FHIR data keeps an empty bucket (no
+        # phantom visit cards in the UI).
+        self.assertEqual(records["by_visit"]["b92d1e8f-accc-48d4-84dd-2eb3e0d9fdca"], [])
+        # The merged list is unchanged: each patient-level record appears exactly once.
+        self.assertEqual([r.get("id") for r in records["records"]], ["cond-1", "enc-1", "med-1"])
+        self.assertEqual(records["errors"], {})
+
+    def test_records_step_resolves_facility_for_folded_encounter(self):
+        # The visit with the data is outside the per-visit cap, so its
+        # Encounter arrives via the patient-level fetch — the facility
+        # reference on it must still be resolved into the visit bucket,
+        # which is where the journey UI reads the facility from.
+        self.set_aws_settings()
+        self.set_settings(
+            mpi_id_resolution="/v1/mpi/patient",
+            patient_resources=[{"resource_type": "Encounter", "patient_param": "subject"}],
+        )
+        empty = {"resourceType": "Bundle", "entry": []}
+        encounter = {
+            "resourceType": "Bundle",
+            "entry": [
+                {
+                    "resource": {
+                        "resourceType": "Encounter",
+                        "id": "enc-1",
+                        # upstream sends episodeOfCare as a 0..N array
+                        "episodeOfCare": [{"reference": "EpisodeOfCare/v-2"}],
+                        "serviceProvider": {"reference": "Organization/org-1"},
+                    }
+                }
+            ],
+        }
+        org = {"resourceType": "Organization", "id": "org-1", "name": "TEST REFERRAL HOSPITAL"}
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[
+                http_response(consent_payload()),  # consent step
+                http_response(empty),  # per-visit fetch for the consent visit (empty)
+                http_response(self.mpi_payload()),  # MPI resolution
+                http_response(encounter),  # Encounter: shr
+                http_response(empty),  # Encounter: cr
+                http_response(org),  # facility resolved by id after the fold
+            ],
+        ) as mock_get:
+            self.run_flow(["consent", "records"], {"cr_id": "CR1"})
+        self.assertTrue(mock_get.call_args_list[5].args[0].endswith("/r4/Organization/org-1"))
+        data = frappe.local.response.get("data")
+        records = data["results"]["records"]
+        self.assertEqual(
+            [(r.get("resourceType"), r.get("id")) for r in records["by_visit"]["v-2"]],
+            [("Encounter", "enc-1"), ("Organization", "org-1")],
+        )
+        self.assertEqual(records["errors"], {})
 
 
 class TestFetchPatientRecords(IntegrationTestCase):
@@ -670,3 +992,203 @@ class TestFetchPatientRecords(IntegrationTestCase):
     def test_fetch_empty_bundle(self):
         with patch.object(patient.requests, "get", return_value=http_response({"resourceType": "Bundle", "entry": []})):
             self.assertEqual(patient.fetch_patient_records(self.VISIT_ID), [])
+
+    def provider_bundle(self):
+        return {
+            "resourceType": "Bundle",
+            "entry": [
+                {
+                    "resource": {
+                        "resourceType": "Encounter",
+                        "id": "enc-1",
+                        "serviceProvider": {"reference": "Organization/org-1"},
+                    }
+                }
+            ],
+        }
+
+    def provider_org(self):
+        return {
+            "resourceType": "Organization",
+            "id": "org-1",
+            "name": "TEST REFERRAL HOSPITAL",
+            "type": [{"coding": [{"code": "HOSPITAL LEVEL 5", "display": "HOSPITAL LEVEL 5"}]}],
+        }
+
+    def test_fetch_resolves_service_provider_organization(self):
+        # The visit-scoped search returns the Encounter with only a facility
+        # reference; the by-id GET reveals the Organization the journey UI
+        # renders as the visit's facility.
+        with patch.object(
+            patient.requests, "get", side_effect=[http_response(self.provider_bundle()), http_response(self.provider_org())]
+        ) as mock_get:
+            records = patient.fetch_patient_records(self.VISIT_ID)
+        self.assertEqual(mock_get.call_count, 2)
+        self.assertTrue(mock_get.call_args_list[1].args[0].endswith("/r4/Organization/org-1"))
+        self.assertEqual(
+            [(r.get("resourceType"), r.get("id")) for r in records],
+            [("Encounter", "enc-1"), ("Organization", "org-1")],
+        )
+        name = next(entry["value"] for entry in records[1].get("headline", []) if entry["label"] == "Name")
+        self.assertEqual(name, "TEST REFERRAL HOSPITAL")
+
+    def test_fetch_shares_organization_cache_between_visits(self):
+        # A journey resolves the same facility across several visits: the
+        # by-id GET happens once, and every visit's bucket still carries the
+        # Organization.
+        cache = {}
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[
+                http_response(self.provider_bundle()),
+                http_response(self.provider_org()),
+                http_response(self.provider_bundle()),
+            ],
+        ) as mock_get:
+            first = patient.fetch_patient_records("v-1", cache)
+            second = patient.fetch_patient_records("v-2", cache)
+        self.assertEqual(mock_get.call_count, 3)
+        for records in (first, second):
+            self.assertIn(("Organization", "org-1"), [(r.get("resourceType"), r.get("id")) for r in records])
+
+    def test_fetch_tolerates_unresolvable_service_provider(self):
+        # A failed by-id GET drops the facility, not the visit's records.
+        with patch.object(
+            patient.requests, "get", side_effect=[http_response(self.provider_bundle()), http_response(None, status_code=404)]
+        ):
+            records = patient.fetch_patient_records(self.VISIT_ID)
+        self.assertEqual([(r.get("resourceType"), r.get("id")) for r in records], [("Encounter", "enc-1")])
+
+
+class TestPatientLevelRecords(IntegrationTestCase):
+    SHR_ID = "KE-SHRP-8B626E2B-2B15-4C93-9735"
+    REGION = "eu-west-2"
+    DATA_STORE_ID = "0123456789abcdef0123456789abcdef01"
+
+    def setUp(self):
+        doc = frappe.get_doc("HISI Settings")
+        for key, value in {
+            "base_url": "https://api.dha.go.ke",
+            "consumer_key": "KEY",
+            "consumer_secret": "SECRET",
+            "username": "USER",
+            "password": "PASS",
+            "data_store_id": self.DATA_STORE_ID,
+            "aws_access_key": "AKIAEXAMPLEKEY00000001",
+            "aws_secret_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "aws_region": self.REGION,
+            "mpi_id_resolution": "/v1/mpi/patient",
+            "enable_uat_simulation": 0,
+        }.items():
+            doc.set(key, value)
+        doc.set(
+            "patient_resources",
+            [
+                {"resource_type": "Observation", "patient_param": "subject"},
+                {"resource_type": "DocumentReference", "patient_param": "patient"},
+            ],
+        )
+        doc.save(ignore_permissions=True)
+
+    def test_resolve_shr_patient_id_parses_mpi_envelope(self):
+        payload = {
+            "status": "success",
+            "message": "Success",
+            "status_code": 200,
+            "data": {
+                "patient": {
+                    "status": "success",
+                    "message": "MPI record found.",
+                    "data": {"cr_id": "CR1", "mpi_id": "KE-MPI-D2AB96DC-8971-409A-8DD4-71431E4E88AB", "shr_id": self.SHR_ID},
+                },
+                "facility": None,
+                "practitioner": None,
+            },
+            "pagination": {},
+        }
+        with patch.object(patient.requests, "get", return_value=http_response(payload)) as mock_get:
+            shr_id = patient.resolve_shr_patient_id("CR1")
+        self.assertEqual(shr_id, self.SHR_ID)
+        self.assertEqual(mock_get.call_args.args[0], "https://api.dha.go.ke/v1/mpi/patient")
+        self.assertEqual(mock_get.call_args.kwargs["params"], {"cr_id": "CR1"})
+        self.assertEqual(
+            mock_get.call_args.kwargs["headers"]["Authorization"],
+            "Basic " + base64.b64encode(b"USER:PASS").decode("ascii"),
+        )
+
+    def test_resolve_shr_patient_id_empty_cr_id(self):
+        self.assertEqual(patient.resolve_shr_patient_id(""), "")
+        self.assertEqual(patient.resolve_shr_patient_id("   "), "")
+
+    def test_resolve_shr_patient_id_missing_setting(self):
+        doc = frappe.get_doc("HISI Settings")
+        doc.set("mpi_id_resolution", "")
+        doc.save(ignore_permissions=True)
+        with self.assertRaises(patient.BadRequest) as ctx:
+            patient.resolve_shr_patient_id("CR1")
+        self.assertIn("mpi_id_resolution", str(ctx.exception))
+
+    def test_fetch_patient_level_records_signed_request_per_resource(self):
+        observations = http_response({"resourceType": "Bundle", "entry": [{"resource": {"resourceType": "Observation", "id": "obs-1"}}]})
+        documents = http_response(
+            {"resourceType": "Bundle", "entry": [{"resource": {"resourceType": "DocumentReference", "id": "doc-1"}}]}
+        )
+        with patch.object(patient.requests, "get", side_effect=[observations, documents]) as mock_get:
+            by_resource, errors = patient.fetch_patient_level_records(self.SHR_ID)
+        self.assertEqual(errors, {})
+        host = "healthlake.{}.amazonaws.com".format(self.REGION)
+        paths = [call.args[0] for call in mock_get.call_args_list]
+        self.assertIn("https://{}/datastore/{}/r4/Observation?subject={}".format(host, self.DATA_STORE_ID, self.SHR_ID), paths)
+        self.assertIn("https://{}/datastore/{}/r4/DocumentReference?patient={}".format(host, self.DATA_STORE_ID, self.SHR_ID), paths)
+        self.assertEqual([r.get("id") for r in by_resource["Observation"]], ["obs-1"])
+        self.assertEqual([r.get("id") for r in by_resource["DocumentReference"]], ["doc-1"])
+
+    def test_fetch_patient_level_records_upstream_error_isolated(self):
+        documents = http_response({"resourceType": "Bundle", "entry": [{"resource": {"resourceType": "DocumentReference", "id": "doc-1"}}]})
+        with patch.object(patient.requests, "get", side_effect=[http_response(None, status_code=502), documents]):
+            by_resource, errors = patient.fetch_patient_level_records(self.SHR_ID)
+        self.assertEqual(list(by_resource), ["DocumentReference"])
+        self.assertIn("502", errors["Observation"])
+
+    def test_fetch_patient_level_records_searches_both_identifiers(self):
+        doc = frappe.get_doc("HISI Settings")
+        doc.set("patient_resources", [{"resource_type": "Observation", "patient_param": "subject"}])
+        doc.save(ignore_permissions=True)
+        by_shr = http_response({"resourceType": "Bundle", "entry": [{"resource": {"resourceType": "Observation", "id": "obs-1"}}]})
+        by_cr = http_response({"resourceType": "Bundle", "entry": [{"resource": {"resourceType": "Observation", "id": "obs-2"}}]})
+        with patch.object(patient.requests, "get", side_effect=[by_shr, by_cr]) as mock_get:
+            by_resource, errors = patient.fetch_patient_level_records(self.SHR_ID, "CR1")
+        self.assertEqual(errors, {})
+        host = "healthlake.{}.amazonaws.com".format(self.REGION)
+        paths = [call.args[0] for call in mock_get.call_args_list]
+        self.assertEqual(paths[0], "https://{}/datastore/{}/r4/Observation?subject={}".format(host, self.DATA_STORE_ID, self.SHR_ID))
+        self.assertEqual(paths[1], "https://{}/datastore/{}/r4/Observation?subject=CR1".format(host, self.DATA_STORE_ID))
+        self.assertEqual([r.get("id") for r in by_resource["Observation"]], ["obs-1", "obs-2"])
+
+    def test_fetch_patient_level_records_multiple_resources_per_row(self):
+        doc = frappe.get_doc("HISI Settings")
+        doc.set("patient_resources", [{"resource_type": "Condition, ServiceRequest", "patient_param": "subject"}])
+        doc.save(ignore_permissions=True)
+        by_condition = http_response({"resourceType": "Bundle", "entry": [{"resource": {"resourceType": "Condition", "id": "cond-1"}}]})
+        by_service_request = http_response(
+            {"resourceType": "Bundle", "entry": [{"resource": {"resourceType": "ServiceRequest", "id": "sr-1"}}]}
+        )
+        with patch.object(patient.requests, "get", side_effect=[by_condition, by_service_request]) as mock_get:
+            by_resource, errors = patient.fetch_patient_level_records(self.SHR_ID)
+        self.assertEqual(errors, {})
+        host = "healthlake.{}.amazonaws.com".format(self.REGION)
+        paths = [call.args[0] for call in mock_get.call_args_list]
+        self.assertEqual(paths[0], "https://{}/datastore/{}/r4/Condition?subject={}".format(host, self.DATA_STORE_ID, self.SHR_ID))
+        self.assertEqual(paths[1], "https://{}/datastore/{}/r4/ServiceRequest?subject={}".format(host, self.DATA_STORE_ID, self.SHR_ID))
+        self.assertEqual([r.get("id") for r in by_resource["Condition"]], ["cond-1"])
+        self.assertEqual([r.get("id") for r in by_resource["ServiceRequest"]], ["sr-1"])
+
+    def test_fetch_patient_level_records_defaults_to_subject_param(self):
+        doc = frappe.get_doc("HISI Settings")
+        doc.set("patient_resources", [{"resource_type": "Observation"}])
+        doc.save(ignore_permissions=True)
+        with patch.object(patient.requests, "get", return_value=http_response({"resourceType": "Bundle", "entry": []})) as mock_get:
+            patient.fetch_patient_level_records(self.SHR_ID)
+        host = "healthlake.{}.amazonaws.com".format(self.REGION)
+        self.assertEqual(mock_get.call_args.args[0], "https://{}/datastore/{}/r4/Observation?subject={}".format(host, self.DATA_STORE_ID, self.SHR_ID))

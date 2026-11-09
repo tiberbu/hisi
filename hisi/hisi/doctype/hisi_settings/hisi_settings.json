@@ -37,6 +37,8 @@
   "aws_region",
   "query_mapper",
   "empty_payload_sha256",
+  "mpi_id_resolution",
+  "patient_resources",
   "surveillance_tab",
   "surveillance_session_ttl_minutes",
   "surveillance_idle_timeout_minutes",
@@ -274,11 +276,23 @@
    "fieldtype": "Select",
    "label": "Timeline Data Source",
    "options": "API\nDatabase"
+  },
+  {
+   "default": "/v1/mpi/patient",
+   "fieldname": "mpi_id_resolution",
+   "fieldtype": "Data",
+   "label": "MPI ID Resolution"
+  },
+  {
+   "fieldname": "patient_resources",
+   "fieldtype": "Table",
+   "label": "Patient Resources",
+   "options": "SHR Patient Resource"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-11-04 21:21:01.077418",
+ "modified": "2026-11-09 11:38:17.004699",
  "modified_by": "Administrator",
  "module": "Hisi",
  "name": "HISI Settings",
