@@ -21,7 +21,14 @@ DEFAULT_SYSTEM_PROMPT = (
 	"You are a health-insurance claims auditor. You are given a member's data "
 	"(consents, contribution payments, claims, and preauthorizations) and a "
 	"list of discrepancy checks. Compare the data strictly against the checks "
-	"and report each discrepancy you can support with the data."
+	"and report each discrepancy you can support with the data.\n"
+	"When a visits section is present, each visit bucket holds the visit's "
+	"consent state, the Shared Health Record (SHR) resources submitted for "
+	"that visit, and the claim/preauthorization records linked to it. Compare "
+	"the claim details against the SHR details visit by visit — patient "
+	"identity, facility, service dates, diagnoses, services and amounts — and "
+	"flag a visit whose claims are not covered by an approved consent, or a "
+	"consented visit with no linked claims, when the data supports it."
 )
 
 #: Built-in benefits knowledge — condensed from the SHA Benefits Matrix
@@ -79,9 +86,14 @@ def effective_benefits_reference(benefits_reference: str | None) -> str:
 OUTPUT_CONTRACT = (
 	"Compare the data strictly against the checks above. Respond with ONLY a JSON "
 	"object, no markdown, no commentary, in exactly this shape:\n"
-	'{"summary": string, "overall": "clean|minor|major", '
+	'{"summary": string, "executive_summary": string, "overall": "clean|minor|major", '
 	'"findings": [{"tag_code": string, "severity": "low|medium|high", '
 	'"title": string, "detail": string, "evidence": [string]}]}\n'
+	"`summary` is one or two sentences stating the overall result. "
+	"`executive_summary` is a management-level overview of three to six sentences: "
+	"what was audited (data sources and period), the most significant discrepancies "
+	"and their likely financial or compliance impact, and what should happen next — "
+	"written for a reviewer who will not read the line items.\n"
 	"Include one finding for every check you can evaluate against the data; omit "
 	"checks the data does not cover.\n"
 	"ACCURACY RULES (these override every other instruction): (1) Base every "
@@ -173,9 +185,9 @@ def extract_json_object(raw_text) -> dict | None:
 def parse_llm_json(raw_text) -> dict | None:
 	"""Tolerant parse of a raw reply against the OUTPUT_CONTRACT shape.
 
-	Returns ``{"summary", "overall", "findings"}`` (findings as the raw list —
-	:func:`normalize_findings` shapes it) or ``None`` when the reply is not a
-	JSON object carrying a ``findings`` list (the caller retries).
+	Returns ``{"summary", "executive_summary", "overall", "findings"}`` (findings
+	as the raw list — :func:`normalize_findings` shapes it) or ``None`` when the
+	reply is not a JSON object carrying a ``findings`` list (the caller retries).
 	"""
 	obj = extract_json_object(raw_text)
 	if not isinstance(obj, dict):
@@ -187,6 +199,7 @@ def parse_llm_json(raw_text) -> dict | None:
 		overall = "minor"
 	return {
 		"summary": str(obj.get("summary") or "").strip(),
+		"executive_summary": str(obj.get("executive_summary") or "").strip(),
 		"overall": overall,
 		"findings": obj["findings"],
 	}
@@ -238,6 +251,7 @@ def normalize_findings(parsed: dict) -> dict:
 		overall = "minor"
 	return {
 		"summary": str(parsed.get("summary") or "").strip(),
+		"executive_summary": str(parsed.get("executive_summary") or "").strip(),
 		"overall": overall,
 		"findings": findings,
 	}
@@ -323,24 +337,83 @@ def build_report_prompt(
 	return f"{system}{benefits_section}{detail_section}\n\nData:\n{data}\n\nChecks:\n{lines}\n\n{OUTPUT_CONTRACT}"
 
 
+#: Per-visit caps for the claim<->SHR comparison section: a submitted bundle
+#: carries ~5-6 resources and a visit rarely links more than a handful of
+#: claims, so these stay well under ``max_records`` while bounding the
+#: prompt size.
+_VISIT_MAX_RESOURCES = 12
+_VISIT_MAX_LINKED_CLAIMS = 10
+
+
 def build_data_context(cr_id: str, sources: list[str], results: dict, errors: dict, max_records: int) -> dict:
 	"""The compact data section of the prompt: one trimmed entry per source.
 
 	Each step result is included with its record-like lists capped at
 	``max_records`` entries; per-source fetch errors are carried in
 	``errors`` so the model can see which checks it must omit (accuracy rule
-	4) instead of guessing.
+	4) instead of guessing. When the worker attached the per-visit join
+	(``results["visits"]``), a ``visits`` section is added: one bucket per
+	visit with the consent state, the Shared Health Record resources
+	submitted for the visit (compact FHIR views), and the claim/preauth
+	records linked to it — the per-visit claim<->SHR comparison data.
 	"""
 	data = {}
 	for step in sources:
 		if step in results:
 			data[step] = _trim_step(results[step], max_records)
-	return {
+	context = {
 		"cr_id": str(cr_id or ""),
 		"sources": list(sources),
 		"data": data,
 		"errors": {key: str(value) for key, value in (errors or {}).items()},
 	}
+	visits = results.get("visits")
+	if isinstance(visits, list):
+		visit_context = [_visit_context(visit) for visit in visits[:max_records] if isinstance(visit, dict)]
+		if visit_context:
+			context["visits"] = visit_context
+	return context
+
+
+def _visit_context(visit: dict) -> dict:
+	"""One per-visit comparison bucket for the prompt."""
+	out = {
+		"visit_id": str(visit.get("visit_id") or ""),
+		"consented": visit.get("consented"),
+	}
+	for key in ("facility_id", "consent_status", "consent_creation"):
+		if visit.get(key) not in (None, ""):
+			out[key] = visit.get(key)
+	shr = [resource for resource in (visit.get("shr_resources") or []) if isinstance(resource, dict)]
+	out["shr_resources"] = [_shr_resource_brief(resource) for resource in shr[:_VISIT_MAX_RESOURCES]]
+	claims = [claim for claim in (visit.get("linked_claims") or []) if isinstance(claim, dict)]
+	out["linked_claims"] = claims[:_VISIT_MAX_LINKED_CLAIMS]
+	return out
+
+
+#: The claim<->SHR comparison fields per FHIR resource type — the
+#: identifiers, dates, parties and services the checks actually compare
+#: (meta/extension noise dropped).
+_SHR_BRIEF_FIELDS = {
+	"Encounter": ("id", "status", "class", "period", "episodeOfCare", "identifier", "serviceProvider"),
+	"Claim": ("id", "status", "type", "use", "billablePeriod", "created", "patient", "provider", "diagnosis", "item", "total"),
+	"Patient": ("id", "identifier", "name", "gender", "birthDate"),
+	"Coverage": ("id", "identifier", "status", "beneficiary"),
+	"Organization": ("id", "name", "identifier"),
+}
+
+
+def _shr_resource_brief(resource: dict) -> dict:
+	"""A compact view of one Shared Health Record FHIR resource: the
+	``resourceType`` plus the comparison fields for that type (unknown types
+	carry their ``id`` only)."""
+	rtype = str(resource.get("resourceType") or "")
+	brief = {"resourceType": rtype}
+	for key in _SHR_BRIEF_FIELDS.get(rtype, ("id",)):
+		value = resource.get(key)
+		if value not in (None, "", [], {}):
+			brief[key] = value
+	return brief
 
 
 def _trim_step(result, max_records: int):

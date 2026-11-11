@@ -1,12 +1,15 @@
 # Copyright (c) 2026, Tiberbu and contributors
 # For license information, please see license.txt
 
+import io
 import json
 from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from hisi.api.ai import api as ai_api
+from hisi.api.ai import report_pdf
 from hisi.api.ai import worker
 from hisi.api.ai.prompt import (
 	OUTPUT_CONTRACT,
@@ -19,7 +22,7 @@ from hisi.api.ai.prompt import (
 )
 from hisi.api.ai.seed import DEFAULT_TAGS, ensure_default_tags
 from hisi.api.ai.settings import get_ai_data_sources, get_ai_settings
-from hisi.api.response_handler import BadRequest
+from hisi.api.response_handler import BadRequest, UpstreamError
 
 AI_SINGLE = "HISI AI Settings"
 REPORT = "HISI Discrepancy Report"
@@ -59,6 +62,18 @@ def _make_report(cr_id: str = "CRTEST") -> object:
 	)
 	doc.insert()
 	return doc
+
+
+def _fake_pdf_bytes() -> bytes:
+	"""A real (minimal) PDF, not just a header: the File doctype validates
+	PDF content with pypdf (pdf_contains_js) on insert."""
+	from pypdf import PdfWriter
+
+	writer = PdfWriter()
+	writer.add_blank_page(width=612, height=792)
+	buf = io.BytesIO()
+	writer.write(buf)
+	return buf.getvalue()
 
 
 def _terminal(doc_name: str) -> dict:
@@ -145,6 +160,17 @@ class TestParse(IntegrationTestCase):
 		result = normalize_findings({"summary": "", "overall": "major", "findings": []})
 		self.assertEqual(result["overall"], "clean")
 
+	def test_parse_llm_json_carries_executive_summary(self):
+		parsed = parse_llm_json('{"summary": "s", "executive_summary": "  Management overview.  ", "overall": "clean", "findings": []}')
+		self.assertEqual(parsed["executive_summary"], "Management overview.")
+
+	def test_normalize_findings_carries_executive_summary(self):
+		result = normalize_findings({"summary": "s", "executive_summary": "Exec.", "overall": "clean", "findings": []})
+		self.assertEqual(result["executive_summary"], "Exec.")
+		# a missing key degrades to an empty string (the PDF falls back to summary)
+		missing = normalize_findings({"summary": "s", "overall": "clean", "findings": []})
+		self.assertEqual(missing["executive_summary"], "")
+
 	def test_render_report_markdown_clean(self):
 		md = render_report_markdown("CR1", "Jane Doe", {"summary": "all good", "overall": "clean", "findings": []}, model="qwen3-27b")
 		self.assertIn("# Discrepancy Report — CR1", md)
@@ -169,6 +195,40 @@ class TestParse(IntegrationTestCase):
 		self.assertIn("**Evidence**", md)
 		self.assertIn("- claim C1", md)
 
+	def test_render_report_html_sections_and_escaping(self):
+		result = {
+			"summary": "Fallback summary.",
+			"executive_summary": "The audit reviewed <b>claims</b> & preauths.",
+			"overall": "major",
+			"findings": [
+				{
+					"tag_code": "A",
+					"severity": "high",
+					"title": "Dup <script>alert(1)</script>",
+					"detail": "twice",
+					"evidence": ["claim C1"],
+				},
+			],
+		}
+		html_text = report_pdf.render_report_html(
+			"CR1", "Jane & Co", result, model="qwen3-27b", generated_at="2026-01-01 00:00:00"
+		)
+		self.assertIn("Executive Summary", html_text)
+		self.assertIn("The audit reviewed &lt;b&gt;claims&lt;/b&gt; &amp; preauths.", html_text)
+		self.assertIn("Jane &amp; Co", html_text)
+		self.assertIn("Findings (1)", html_text)
+		self.assertIn("Dup &lt;script&gt;alert(1)&lt;/script&gt;", html_text)
+		self.assertNotIn("<script>alert(1)</script>", html_text)
+		self.assertIn("2026-01-01 00:00:00", html_text)
+		self.assertIn("qwen3-27b", html_text)
+
+	def test_render_report_html_executive_falls_back_to_summary(self):
+		result = {"summary": "Only summary.", "executive_summary": "", "overall": "clean", "findings": []}
+		html_text = report_pdf.render_report_html("CR1", "", result)
+		self.assertIn("Only summary.", html_text)
+		self.assertIn("Findings (0)", html_text)
+		self.assertIn("No discrepancies found in the analyzed data.", html_text)
+
 
 class TestDataContext(IntegrationTestCase):
 	def test_build_data_context_caps_records(self):
@@ -184,6 +244,114 @@ class TestDataContext(IntegrationTestCase):
 		self.assertEqual(context["data"]["records"]["records"], [{"i": 3}, {"i": 1}, {"i": 2}])
 		self.assertEqual(context["errors"], {"consent": "boom"})
 		self.assertEqual(context["sources"], ["claims", "contributions", "records"])
+
+	def test_build_data_context_includes_visit_comparison(self):
+		results = {
+			"claims": {"records": [{"name": "C1"}]},
+			"visits": [
+				{
+					"visit_id": "V1",
+					"consented": True,
+					"facility_id": "F1",
+					"consent_status": "Approved",
+					"consent_creation": "2026-11-01",
+					"shr_resources": [
+						{"resourceType": "Encounter", "id": "e1", "episodeOfCare": [{"reference": "EpisodeOfCare/V1"}], "meta": {"profile": ["x"]}},
+						{"resourceType": "DocumentReference", "id": "d1", "other": "dropped"},
+					],
+					"linked_claims": [{"kind": "claim", "name": "C1"}],
+				},
+				{"visit_id": "V2", "consented": False, "shr_resources": [], "linked_claims": []},
+			],
+		}
+		context = build_data_context("C", ["claims"], results, {}, 5)
+		visits = context["visits"]
+		self.assertEqual(len(visits), 2)
+		self.assertEqual(visits[0]["visit_id"], "V1")
+		self.assertTrue(visits[0]["consented"])
+		self.assertEqual(visits[0]["consent_status"], "Approved")
+		# FHIR resources are briefed: comparison fields kept, noise dropped
+		self.assertEqual(visits[0]["shr_resources"][0]["resourceType"], "Encounter")
+		self.assertEqual(visits[0]["shr_resources"][0]["id"], "e1")
+		self.assertNotIn("meta", visits[0]["shr_resources"][0])
+		self.assertEqual(visits[0]["shr_resources"][1], {"resourceType": "DocumentReference", "id": "d1"})
+		self.assertEqual(visits[0]["linked_claims"], [{"kind": "claim", "name": "C1"}])
+		self.assertFalse(visits[1]["consented"])
+		self.assertNotIn("facility_id", visits[1])
+		self.assertEqual(visits[1]["shr_resources"], [])
+
+	def test_build_data_context_omits_visits_when_absent(self):
+		context = build_data_context("C", ["claims"], {"claims": {"records": []}}, {}, 5)
+		self.assertNotIn("visits", context)
+
+
+def _route_patches():
+	return (
+		patch.object(worker, "med_claim_search_path", return_value="/v1/med/resource/Claim Record"),
+		patch.object(worker, "med_preauth_search_path", return_value="/v1/preauth/resource/Claim Record"),
+	)
+
+
+class TestAttachVisitLinks(IntegrationTestCase):
+	def test_links_claims_and_builds_visits(self):
+		results = {
+			"claims": {"records": [{"name": "C1", "bundle_id": "B1"}, {"name": "C2", "bundle_id": "B2"}]},
+			"preauth": {"records": [{"name": "P1", "bundle_id": "B3"}]},
+			"consent": {"records": [{"visit_id": "V1", "facility_id": "F1", "consent_status": "Approved", "creation": "2026-11-01"}]},
+		}
+		errors = {}
+		join = patch.object(
+			worker,
+			"visit_claim_context",
+			return_value=({"C1": "V1", "C2": "V1", "P1": "V2"}, {"V1": [{"resourceType": "Encounter"}], "V2": []}, []),
+		)
+		r1, r2 = _route_patches()
+		with join, r1, r2:
+			worker._attach_visit_links(results, errors)
+		self.assertEqual(errors, {})
+		self.assertEqual(results["claims"]["records"][0]["visit_id"], "V1")
+		self.assertEqual(results["claims"]["records"][1]["visit_id"], "V1")
+		visits = {visit["visit_id"]: visit for visit in results["visits"]}
+		self.assertIn("V1", visits)  # the consented visit keeps its consent row
+		self.assertTrue(visits["V1"]["consented"])
+		self.assertEqual(visits["V1"]["consent_status"], "Approved")
+		self.assertEqual([claim["kind"] for claim in visits["V1"]["linked_claims"]], ["claim", "claim"])
+		self.assertIn("V2", visits)  # claim-derived, not consented
+		self.assertFalse(visits["V2"]["consented"])
+		self.assertEqual(visits["V2"]["linked_claims"][0]["kind"], "preauth")
+
+	def test_consent_unknown_when_consent_step_errored(self):
+		results = {"claims": {"records": [{"name": "C1", "bundle_id": "B1"}]}}  # no consent key
+		errors = {}
+		join = patch.object(worker, "visit_claim_context", return_value=({"C1": "V1"}, {"V1": []}, []))
+		r1, r2 = _route_patches()
+		with join, r1, r2:
+			worker._attach_visit_links(results, errors)
+		self.assertEqual(errors, {})
+		visits = results["visits"]
+		self.assertEqual(len(visits), 1)
+		self.assertIsNone(visits[0]["consented"])
+
+	def test_join_failure_lands_in_errors_without_visits(self):
+		results = {"claims": {"records": [{"name": "C1", "bundle_id": "B1"}]}}
+		errors = {}
+		join = patch.object(worker, "visit_claim_context", side_effect=UpstreamError("SHR 417"))
+		r1, r2 = _route_patches()
+		with join, r1, r2:
+			worker._attach_visit_links(results, errors)
+		self.assertIn("visit_join", errors)
+		self.assertNotIn("visits", results)
+
+	def test_no_claims_no_join(self):
+		results = {"claims": {"records": []}, "preauth": {"records": []}}
+		errors = {}
+		join = patch.object(worker, "visit_claim_context")
+		r1, r2 = _route_patches()
+		with join as mock_join, r1, r2:
+			worker._attach_visit_links(results, errors)
+		mock_join.assert_not_called()
+		self.assertNotIn("visits", results)
+		self.assertEqual(errors, {})
 
 
 class TestSettings(IntegrationTestCase):
@@ -291,11 +459,91 @@ class TestWorkerFailClosed(IntegrationTestCase):
 
 		p1, p2, p3, p4 = _empty_sources_patches()
 		p5 = patch.object(worker.llm_client, "stream_chat_completion", side_effect=fake_stream)
-		with p1, p2, p3, p4, p5:
+		# no real wkhtmltopdf run in tests — valid fake bytes exercise the PDF attach path
+		p6 = patch.object(report_pdf, "build_report_pdf_bytes", return_value=_fake_pdf_bytes())
+		with p1, p2, p3, p4, p5, p6 as mock_pdf:
 			worker.run_discrepancy_report(doc.name)
+		mock_pdf.assert_called_once()
 		self.assertEqual(calls["n"], 2)  # initial + exactly one corrective retry
 		row = _terminal(doc.name)
 		self.assertEqual(row["status"], "Success")
 		findings = json.loads(row["findings"])
 		self.assertEqual(findings["overall"], "clean")
 		self.assertIn("Discrepancy Report", row["report"])
+		# the PDF deliverable is attached as a private File on the job
+		pdfs = frappe.get_all(
+			"File",
+			filters={"attached_to_doctype": REPORT, "attached_to_name": doc.name},
+			fields=["file_name"],
+		)
+		self.assertEqual([pdf.file_name for pdf in pdfs], [f"{doc.name}.pdf"])
+
+
+class TestGenerateApi(IntegrationTestCase):
+	"""Per-patient dedupe: a member with a live/completed report gets it
+	back (200, ``existing: true``, no new job, no LLM spend); ``force``
+	bypasses the check and creates a fresh job (202)."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.local.response = frappe._dict()
+		# the API's commit must stay a no-op: the per-class test rollback
+		# owns the transaction (a real commit would leak the seeded docs)
+		self._commit_patcher = patch.object(frappe.db, "commit")
+		self._commit_patcher.start()
+
+	def tearDown(self):
+		self._commit_patcher.stop()
+		super().tearDown()
+
+	def test_generate_returns_existing_report_without_new_job(self):
+		existing = _make_report(cr_id="CRDEDUPE")
+		frappe.db.set_value(REPORT, existing.name, "status", "Success")
+		ai_api.generate_discrepancy_report(data={"cr_id": "CRDEDUPE"})
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 200)
+		self.assertEqual(resp["status"], "success")
+		self.assertEqual(resp["data"]["report"], existing.name)
+		self.assertEqual(resp["data"]["status"], "Success")
+		self.assertTrue(resp["data"]["existing"])
+		self.assertEqual(frappe.db.count(REPORT, {"subject_cr_id": "CRDEDUPE"}), 1)
+
+	def test_generate_returns_queued_existing(self):
+		# a run already in flight is the answer too — no second job
+		existing = _make_report(cr_id="CRQUEUED")  # _make_report leaves it Queued
+		ai_api.generate_discrepancy_report(data={"cr_id": "CRQUEUED"})
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 200)
+		self.assertEqual(resp["data"]["report"], existing.name)
+		self.assertEqual(resp["data"]["status"], "Queued")
+		self.assertEqual(frappe.db.count(REPORT, {"subject_cr_id": "CRQUEUED"}), 1)
+
+	def test_generate_force_bypasses_dedupe(self):
+		existing = _make_report(cr_id="CRFORCE")
+		frappe.db.set_value(REPORT, existing.name, "status", "Success")
+		ensure_default_tags()
+		with patch.object(frappe, "enqueue") as mock_enqueue:
+			ai_api.generate_discrepancy_report(data={"cr_id": "CRFORCE", "force": True})
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 202)
+		self.assertIn("report", resp["data"])
+		self.assertNotIn("existing", resp["data"])
+		self.assertNotEqual(resp["data"]["report"], existing.name)
+		self.assertEqual(frappe.db.count(REPORT, {"subject_cr_id": "CRFORCE"}), 2)
+		mock_enqueue.assert_called_once()
+
+	def test_generate_ignores_existing_failed_report(self):
+		# a Failed run is not "the answer" — a fresh job is created instead
+		existing = _make_report(cr_id="CRFAILED")
+		frappe.db.set_value(REPORT, existing.name, "status", "Failed")
+		ensure_default_tags()
+		with patch.object(frappe, "enqueue"):
+			ai_api.generate_discrepancy_report(data={"cr_id": "CRFAILED"})
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 202)
+		self.assertNotEqual(resp["data"]["report"], existing.name)
+		self.assertEqual(frappe.db.count(REPORT, {"subject_cr_id": "CRFAILED"}), 2)
+
+	def test_generate_requires_cr_id(self):
+		ai_api.generate_discrepancy_report(data={"tag_codes": []})
+		self.assertEqual(frappe.local.response["http_status_code"], 400)

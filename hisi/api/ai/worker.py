@@ -35,7 +35,7 @@ import time
 import frappe
 from frappe.utils import add_to_date, now_datetime
 
-from hisi.api.ai import llm_client
+from hisi.api.ai import llm_client, report_pdf
 from hisi.api.ai.benefits_registry import matched_benefits_lines
 from hisi.api.ai.prompt import (
 	CORRECTIVE_MESSAGE,
@@ -48,12 +48,15 @@ from hisi.api.ai.prompt import (
 from hisi.api.ai.settings import get_ai_data_sources, get_ai_settings
 from hisi.api.patient import (
 	fetch_patient_contributions,
+	med_claim_search_path,
+	med_preauth_search_path,
 	step_claims,
 	step_consent,
 	step_eligibility,
 	step_patient,
 	step_preauth,
 	step_records_multi,
+	visit_claim_context,
 )
 from hisi.api.response_handler import BadRequest, NotFound, UpstreamError
 
@@ -159,9 +162,23 @@ def run_discrepancy_report(report_name: str) -> None:
 			normalized,
 			model=str(settings.llm_model or ""),
 		)
+		# The deliverable is a PDF (the markdown is kept on the doc as the
+		# plain-text record). Best-effort render: a host missing the PDF
+		# engine degrades to a report without a PDF file, never a failure.
+		pdf_bytes = None
+		try:
+			pdf_bytes = report_pdf.build_report_pdf_bytes(
+				str(doc.subject_cr_id or ""),
+				str(doc.subject_name or ""),
+				normalized,
+				model=str(settings.llm_model or ""),
+			)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"report pdf render {report_name}")
 		_mark_success(
 			report_name,
 			duration_ms(),
+			pdf_bytes=pdf_bytes,
 			report=markdown,
 			findings=json.dumps(normalized, ensure_ascii=False),
 			raw_response=raw or "",
@@ -271,7 +288,124 @@ def _fetch_context(doc) -> tuple:
 			errors[step] = exc.message or str(exc)
 		except Exception as exc:
 			errors[step] = str(exc)
+	_attach_visit_links(results, errors)
 	return sources, results, errors
+
+
+def _attach_visit_links(results: dict, errors: dict) -> None:
+	"""The claim<->visit join for the per-visit comparison (see
+	``visit_claim_context``): each claim's ``bundle_id`` points at the Shared
+	Health Record the claim was submitted in, and that SHR's FHIR bundle
+	carries the Encounter whose ``episodeOfCare`` is the visit (the consent
+	``visit_id`` space). The submitted bundles become the SHR side of the
+	per-visit comparison and land in ``results["visits"]`` alongside the
+	consented visits. Claim-driven: it runs whenever any claim/preauth
+	record is present, even if the consent step failed. Fail-soft: a join
+	failure is recorded in errors and never sinks the run."""
+	try:
+		routes = {"claims": med_claim_search_path(), "preauth": med_preauth_search_path()}
+	except (BadRequest, NotFound, UpstreamError) as exc:
+		errors["visit_join"] = "claim route unavailable: {}".format(exc.message or exc)
+		return
+	except Exception as exc:
+		errors["visit_join"] = "claim route unavailable: {}".format(exc)
+		return
+	claim_routes = []
+	for step in ("claims", "preauth"):
+		data = results.get(step)
+		if not isinstance(data, dict):
+			continue
+		for record in data.get("records") or []:
+			if isinstance(record, dict):
+				claim_routes.append((record, routes[step]))
+	if not claim_routes:
+		return
+	try:
+		claim_map, by_visit, problems = visit_claim_context(claim_routes)
+	except (BadRequest, NotFound, UpstreamError) as exc:
+		errors["visit_join"] = exc.message or str(exc)
+		return
+	except Exception as exc:
+		errors["visit_join"] = str(exc)
+		return
+	if problems:
+		errors["visit_join"] = "; ".join(problems)
+	for step in ("claims", "preauth"):
+		data = results.get(step)
+		if not isinstance(data, dict):
+			continue
+		for record in data.get("records") or []:
+			if not isinstance(record, dict):
+				continue
+			visit_id = claim_map.get(str(record.get("name") or "").strip())
+			if visit_id:
+				record["visit_id"] = visit_id
+	# Consent side: the consent step may have succeeded with zero records
+	# (consented = False is then a real finding) or errored entirely
+	# (consented = None — the model must not guess).
+	consent = results.get("consent")
+	consent_records = consent.get("records") if isinstance(consent, dict) else None
+	consent_by_visit = {}
+	for row in consent_records or []:
+		if not isinstance(row, dict):
+			continue
+		visit_id = str(row.get("visit_id") or "").strip()
+		if visit_id:
+			consent_by_visit.setdefault(visit_id, row)
+	linked_by_visit = {}
+	for step in ("claims", "preauth"):
+		data = results.get(step)
+		if not isinstance(data, dict):
+			continue
+		for record in data.get("records") or []:
+			if not isinstance(record, dict):
+				continue
+			visit_id = str(record.get("visit_id") or "").strip()
+			if not visit_id:
+				continue
+			entry = {"kind": "preauth" if step == "preauth" else "claim"}
+			entry.update(record)
+			linked_by_visit.setdefault(visit_id, []).append(entry)
+	visits = []
+	for visit_id, row in consent_by_visit.items():
+		visits.append(
+			_visit_entry(
+				visit_id,
+				consented=True,
+				facility_id=row.get("facility_id"),
+				consent_status=row.get("consent_status"),
+				consent_creation=row.get("creation"),
+				shr_resources=by_visit.get(visit_id) or [],
+				linked_claims=linked_by_visit.get(visit_id) or [],
+			)
+		)
+	for visit_id in sorted((set(linked_by_visit) | set(by_visit)) - set(consent_by_visit)):
+		visits.append(
+			_visit_entry(
+				visit_id,
+				consented=None if consent_records is None else False,
+				shr_resources=by_visit.get(visit_id) or [],
+				linked_claims=linked_by_visit.get(visit_id) or [],
+			)
+		)
+	results["visits"] = visits
+
+
+def _visit_entry(visit_id, *, consented, shr_resources, linked_claims, facility_id=None, consent_status=None, consent_creation=None) -> dict:
+	"""One per-visit comparison bucket for the prompt context."""
+	entry = {
+		"visit_id": visit_id,
+		"consented": consented,
+		"shr_resources": shr_resources,
+		"linked_claims": linked_claims,
+	}
+	if facility_id not in (None, ""):
+		entry["facility_id"] = facility_id
+	if consent_status not in (None, ""):
+		entry["consent_status"] = consent_status
+	if consent_creation not in (None, ""):
+		entry["consent_creation"] = consent_creation
+	return entry
 
 
 def _declared_tags(doc) -> list:
@@ -334,7 +468,30 @@ def _terminal_update(report_name: str, status: str, **fields) -> bool:
 	return bool(affected)
 
 
-def _mark_success(report_name: str, duration_ms: int, **fields) -> bool:
+def _attach_report_pdf(report_name: str, pdf_bytes: bytes) -> str:
+	"""The run's PDF deliverable: one private File attached to the report
+	job. ``content`` must be in the doc at construction time (the platform
+	pattern): without it, ``File.is_remote_file`` is True and ``insert()``
+	would die in ``validate_file_on_disk``."""
+	file_doc = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": f"{report_name}.pdf",
+			"is_private": 1,
+			"attached_to_doctype": REPORT,
+			"attached_to_name": report_name,
+			"content": pdf_bytes,
+		}
+	)
+	file_doc.insert(ignore_permissions=True)
+	return file_doc.name
+
+
+def _mark_success(report_name: str, duration_ms: int, pdf_bytes: bytes | None = None, **fields) -> bool:
+	if pdf_bytes:
+		# Attach before the terminal UPDATE so both rows land in the same
+		# commit (the guarded UPDATE commits in production).
+		_attach_report_pdf(report_name, pdf_bytes)
 	ok = _terminal_update(report_name, "Success", duration_ms=duration_ms, **fields)
 	if ok:
 		frappe.logger("hisi.ai").info(f"discrepancy report {report_name!r} succeeded")

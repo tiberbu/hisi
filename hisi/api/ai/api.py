@@ -13,10 +13,16 @@
 
 The report is async because a multi-minute LLM run must not hold the app
 proxy's 30 s upstream window; ``chat`` is a short call and stays sync.
-Failures land in the standard error envelope via ``@api_endpoint``; the LLM
-is fail-closed — an unconfigured host never returns a success payload.
+The completed report's deliverable is a PDF (a private File attached to the
+job; ``get_discrepancy_report_pdf`` serves it as base64 for the preview).
+``generate_discrepancy_report`` is per-patient deduped: a patient that
+already has a report gets it back (no new LLM spend) unless ``force`` is
+set. Failures land in the standard error envelope via ``@api_endpoint``;
+the LLM is fail-closed — an unconfigured host never returns a success
+payload.
 """
 
+import base64
 import json
 
 import frappe
@@ -77,19 +83,38 @@ def list_discrepancy_tags() -> None:
 def generate_discrepancy_report(data: str | dict = "") -> None:
 	"""Create one discrepancy-report job for a CR ID and enqueue the worker.
 
-	Body: ``{"cr_id": "...", "tag_codes": ["..."]?}`` — ``tag_codes``
-	(optionally) restricts the run to a subset of enabled tags. Returns 202
-	with the job name; poll ``get_discrepancy_report`` for the result.
+	Body: ``{"cr_id": "...", "tag_codes": ["..."]?, "force": bool?}`` —
+	``tag_codes`` (optionally) restricts the run to a subset of enabled
+	tags. Per-patient dedupe: unless ``force`` is true, the member's
+	newest non-failed report (running or completed) is returned as-is, so
+	re-searching an already-audited patient spends no new LLM run. A fresh
+	run returns 202 with the job name; a cached report returns 200 with
+	``existing: true``. Poll ``get_discrepancy_report`` for the result.
 	"""
 	body = _parse_body(data)
 	cr_id = str(body.get("cr_id") or "").strip()
 	if not cr_id:
 		raise BadRequest("cr_id is required.")
+	force = bool(body.get("force"))
 	tag_codes = body.get("tag_codes")
 	if tag_codes is not None:
 		if not isinstance(tag_codes, list) or not all(isinstance(code, str) for code in tag_codes):
 			raise BadRequest("tag_codes must be a list of tag codes.")
 		tag_codes = [code.strip() for code in tag_codes if code.strip()]
+	if not force:
+		# Per-patient dedupe: the newest live or completed job for this
+		# member is the answer — hand it back without spending a new LLM
+		# run (the surface can pass force=true for a fresh analysis).
+		existing = frappe.get_all(
+			REPORT,
+			filters={"subject_cr_id": cr_id, "status": ["in", ["Queued", "Processing", "Success"]]},
+			fields=["name", "status"],
+			order_by="creation desc",
+			limit=1,
+		)
+		if existing:
+			row = existing[0]
+			return APIResponse.success(data={"report": row.name, "status": row.status, "existing": True}, status=200)
 	ensure_default_tags()
 	filters = {"enabled": 1}
 	if tag_codes:
@@ -153,12 +178,58 @@ def get_discrepancy_report(name: str) -> None:
 			payload["findings"] = json.loads(doc.findings) if doc.findings else None
 		except (json.JSONDecodeError, ValueError):
 			payload["findings"] = None
+		payload["pdf"] = _attached_report_pdf(doc.name)
 	elif doc.status == "Failed":
 		try:
 			payload["error"] = json.loads(doc.error) if doc.error else {"code": "UNKNOWN", "message": ""}
 		except (json.JSONDecodeError, ValueError):
 			payload["error"] = {"code": "UNKNOWN", "message": str(doc.error or "")}
 	return APIResponse.success(data=payload)
+
+def _attached_report_pdf(report_name: str) -> dict | None:
+	"""The run's PDF deliverable (the private File the worker attached), or
+	None when the run produced no PDF file (e.g. a host without the engine)."""
+	rows = frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": REPORT, "attached_to_name": report_name},
+		fields=["name", "file_name", "file_type", "file_size", "file_url"],
+	)
+	for row in rows:
+		if str(row.file_name or "").lower().endswith(".pdf"):
+			return {
+				"name": row.name,
+				"file_name": row.file_name,
+				"file_type": row.file_type,
+				"file_size": row.file_size,
+				"file_url": row.file_url,
+			}
+	return None
+
+@frappe.whitelist(methods=["GET", "POST"])
+@api_endpoint
+def get_discrepancy_report_pdf(name: str) -> None:
+	"""The report's PDF deliverable as base64 (the preview/download feed)."""
+	name = str(name or "").strip()
+	if not name:
+		raise BadRequest("name is required.")
+	try:
+		doc = frappe.get_doc(REPORT, name)
+	except frappe.DoesNotExistError:
+		raise NotFound(f"Discrepancy report {name!r} not found.")
+	attached = _attached_report_pdf(doc.name)
+	if not attached:
+		raise NotFound("No PDF for this report (the run did not produce a PDF file).")
+	file_doc = frappe.get_doc("File", attached["name"])
+	content = file_doc.get_content()
+	raw = content if isinstance(content, bytes) else str(content).encode("utf-8")
+	return APIResponse.success(
+		data={
+			"file_name": attached["file_name"],
+			"mime_type": attached["file_type"] or "application/pdf",
+			"file_size": attached["file_size"],
+			"content_b64": base64.b64encode(raw).decode("ascii"),
+		}
+	)
 
 @frappe.whitelist(methods=["GET", "POST"])
 @api_endpoint
@@ -192,7 +263,8 @@ def list_discrepancy_reports(cr_id=None, status=None, page=None, page_size=None)
 	total = frappe.db.count(REPORT, filters)
 	return APIResponse.success(
 		data={
-			"reports": [row.as_dict() for row in rows],
+			# get_all hands back plain dict rows (no as_dict on them).
+			"reports": [dict(row) for row in rows],
 			"total": total,
 			"page": page,
 			"page_size": page_size,
