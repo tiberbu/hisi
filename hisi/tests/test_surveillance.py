@@ -118,6 +118,16 @@ def fhir_bundle():
 	}
 
 
+def empty_bundle():
+	return {"resourceType": "Bundle", "type": "searchset", "total": 0, "entry": []}
+
+
+def mpi_payload():
+	# No shr_id on purpose: the records step then fetches patient-level
+	# resources for the CR ID alone (one identifier value, one mocked call).
+	return {"data": {"patient": {"data": {"cr_id": "CR2473157540001-1", "mpi_id": "MPI-0001"}}}}
+
+
 class SurveillanceTestCase(IntegrationTestCase):
 	# Fixture names shared across the suite; the setUp self-heal clears any
 	# committed residue under these names so a leaked commit can never poison
@@ -1075,6 +1085,14 @@ class TestIntegrationMockedUpstream(SurveillanceTestCase):
 	def setUp(self):
 		SurveillanceTestCase.setUp(self)
 		self.set_aws_settings()
+		# Deterministic records-step inputs: the records step resolves the
+		# patient via the MPI endpoint and fetches one resource type per
+		# identifier value (shr_id, then cr_id) — pin the table to one row so
+		# the mocked GET sequence below never depends on the live site config.
+		self.set_settings(
+			mpi_id_resolution="/v1/mpi/patient",
+			patient_resources=[{"resource_type": "Condition", "patient_param": "subject"}],
+		)
 
 	def test_surveil_patient_shape_identical_to_patient_flow(self):
 		code = self.issue_code()
@@ -1093,7 +1111,14 @@ class TestIntegrationMockedUpstream(SurveillanceTestCase):
 		code = self.issue_code()
 		self.start_session(code)
 		session_no = frappe.local.response["data"]["session_no"]
-		with patch.object(patient.requests, "get", side_effect=[http_response(patient_payload()), http_response(consent_payload()), http_response(fhir_bundle())]), patch.object(
+		# GET order: patient, consent, visit FHIR bundle, MPI id resolution,
+		# one patient-level resource fetch (empty bundle keeps the merged
+		# record list at exactly the visit bundle's two resources).
+		with patch.object(
+			patient.requests,
+			"get",
+			side_effect=[http_response(patient_payload()), http_response(consent_payload()), http_response(fhir_bundle()), http_response(mpi_payload()), http_response(empty_bundle())],
+		), patch.object(
 			patient.requests, "post", return_value=http_response(eligibility_payload())
 		):
 			frappe.set_user(self.officer)
@@ -1108,7 +1133,13 @@ class TestIntegrationMockedUpstream(SurveillanceTestCase):
 		self.start_session(code)
 		session_no = frappe.local.response["data"]["session_no"]
 		before = self.event_count()
-		with patch.object(patient.requests, "get", side_effect=[http_response(patient_payload()), http_response(consent_payload()), http_response(fhir_bundle())]), patch.object(
+		# GET order: patient, consent, visit FHIR bundle, MPI id resolution,
+		# one patient-level resource fetch (see test_full_journey_all_four_steps).
+		with patch.object(
+			patient.requests,
+			"get",
+			side_effect=[http_response(patient_payload()), http_response(consent_payload()), http_response(fhir_bundle()), http_response(mpi_payload()), http_response(empty_bundle())],
+		), patch.object(
 			patient.requests, "post", return_value=http_response(eligibility_payload())
 		):
 			frappe.set_user(self.officer)
@@ -1255,7 +1286,10 @@ class TestMultiCompanySharedTarget(SurveillanceTestCase):
 			expires_at=valid_window()[1],
 		)
 		self.assertEqual(frappe.local.response.get("status"), "success")
-		rows = frappe.get_all("HISI Surveillance Mandate", fields=["company", "facility"])
+		# Scoped to the fixture facility: the site also carries real mandates
+		# for other companies (data-agnostic rule — never assert on the
+		# unfiltered table).
+		rows = frappe.get_all("HISI Surveillance Mandate", filters={"facility": self.facility}, fields=["company", "facility"])
 		self.assertEqual(sorted([r["company"] for r in rows]), sorted([self.org, self.org_b]))
 		# one shared facility row - no per-company duplicate
 		self.assertEqual(frappe.db.count("HISI Health Facility", filters={"name": self.facility}), 1)
