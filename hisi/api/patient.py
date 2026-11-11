@@ -1,4 +1,5 @@
 import base64
+import ast
 import hashlib
 import hmac
 import json
@@ -46,6 +47,7 @@ CLAIM_FIELDS = [
     "diagnoses",
     "facility_name",
     "use",
+    "bundle_id",
 ]
 PROCEDURE_FIELDS = [
     "name",
@@ -1310,6 +1312,124 @@ def med_claim_records(path: str, cr_id: str) -> list:
         for record in parse_records(http_get(join_url(origin, path), params, bearer=True))
         if isinstance(record, dict)
     ]
+
+def visit_claim_context(claim_routes: list) -> tuple:
+    """The claim<->visit join via the registry Shared Health Record.
+
+    The claim/preauth registry has no visit field (2026-11-11 live probe:
+    every candidate visit field name is rejected with 417 DataError), but
+    every claim carries a ``bundle_id`` — the id of the Shared Health
+    Record the claim was submitted in. That SHR resource (looked up on the
+    claim's own registry route with ``name = bundle_id``) stores the
+    submitted FHIR bundle in ``fhir_request``, whose Encounter carries the
+    visit — the ``episodeOfCare`` reference, i.e. the consent ``visit_id``
+    space (verified live on UAT: a claim's bundle resolves to the same
+    EpisodeOfCare id the consent records carry).
+
+    ``claim_routes`` is a list of ``(claim_record, claim_route)`` pairs,
+    where ``claim_route`` is the registry path the claim came from (the
+    configured ``med_claim_search`` / ``med_preauth_search`` value).
+    Returns ``(claim_map, by_visit, problems)``: ``claim_map`` maps a claim
+    id to its visit id ("" when the bundle has no Encounter to read from);
+    ``by_visit`` maps a visit id to the submitted bundle's FHIR resources
+    (the SHR side of the per-visit comparison, deduped across claims sharing
+    a bundle); ``problems`` lists per-bundle failures so one bad bundle
+    never sinks the rest of the join."""
+    claim_map = {}
+    by_visit = {}
+    problems = []
+    bundle_cache = {}
+    for record, route in claim_routes or []:
+        if not isinstance(record, dict):
+            continue
+        claim_id = str(record.get("name") or "").strip()
+        if not claim_id:
+            continue
+        bundle_id = str(record.get("bundle_id") or "").strip()
+        if not bundle_id:
+            claim_map[claim_id] = ""
+            continue
+        if bundle_id not in bundle_cache:
+            try:
+                bundle_cache[bundle_id] = _fetch_shr_bundle(bundle_id, route)
+            except (BadRequest, NotFound, UpstreamError) as exc:
+                problems.append("bundle {}: {}".format(bundle_id, exc.message or exc))
+                bundle_cache[bundle_id] = None
+            except Exception as exc:
+                problems.append("bundle {}: {}".format(bundle_id, exc))
+                bundle_cache[bundle_id] = None
+        bundle = bundle_cache[bundle_id]
+        visit_id = visit_from_fhir_bundle(bundle) if bundle else ""
+        claim_map[claim_id] = visit_id
+        if visit_id and bundle:
+            resources = [
+                entry.get("resource")
+                for entry in bundle.get("entry") or []
+                if isinstance(entry, dict) and isinstance(entry.get("resource"), dict)
+            ]
+            by_visit.setdefault(visit_id, resources)
+    return claim_map, by_visit, problems
+
+def _fetch_shr_bundle(bundle_id: str, claim_route: str):
+    """One Shared Health Record by id (the claim's ``bundle_id``) from the
+    claim's own registry route — ``.../resource/Claim Record`` becomes
+    ``.../resource/Shared Health Record``, so a preauth claim's bundle is
+    read under the preauth route. Returns the submitted FHIR bundle parsed
+    as a dict, or None when the resource carries no readable payload."""
+    shr_path = claim_route.rsplit("/", 1)[0] + "/Shared Health Record"
+    rows = parse_records(
+        http_get(
+            join_url(dha_origin(), shr_path),
+            {"filters": json.dumps([["name", "=", bundle_id]]), "fields": json.dumps(["name", "fhir_request"])},
+            bearer=True,
+        )
+    )
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        payload = parse_shr_fhir_payload(row.get("fhir_request"))
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+def parse_shr_fhir_payload(value):
+    """The registry stores the FHIR payload as text: strict JSON in some
+    rows, a Python dict repr (single quotes) in others — parse either and
+    give up (None) on anything unparseable."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, SyntaxError, TypeError):
+        return None
+
+def visit_from_fhir_bundle(bundle) -> str:
+    """The visit id a FHIR bundle belongs to: the first Encounter's
+    ``episodeOfCare`` reference id (the consent ``visit_id`` space), falling
+    back to the Encounter's ``.../identifier/visit`` identifier. Empty string
+    when the bundle carries no Encounter (some claim bundles hold only
+    Claim/Coverage/Patient/Organization — the visit is simply not
+    recoverable from the claim side)."""
+    for entry in (bundle or {}).get("entry") or []:
+        resource = (entry or {}).get("resource") if isinstance(entry, dict) else None
+        if not isinstance(resource, dict) or resource.get("resourceType") != "Encounter":
+            continue
+        for episode in resource.get("episodeOfCare") or []:
+            ref = str((episode or {}).get("reference") or "").strip()
+            if ref:
+                return ref.rsplit("/", 1)[-1]
+        for identifier in resource.get("identifier") or []:
+            system = str((identifier or {}).get("system") or "")
+            value = str((identifier or {}).get("value") or "").strip()
+            if "visit" in system.lower() and value:
+                return value
+    return ""
 
 def step_records(visit_id: str) -> dict:
     visit_id = str(visit_id or "").strip()
