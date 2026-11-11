@@ -26,7 +26,9 @@ Fail-closed: an unconfigured LLM host fails the job immediately with
 
 The daily ``sweep_stuck_reports`` (registered in ``hooks.scheduler_events``)
 marks ``Processing`` reports older than 2 x total_timeout as ``Failed`` /
-``WORKER_CRASHED`` — a crashed worker is thereby detectable.
+``WORKER_CRASHED`` and ``Queued`` reports older than 4 x total_timeout as
+``Failed`` / ``WORKER_LOST`` — a crashed or job-losing worker is detectable
+instead of leaving a report stuck in a pre-terminal state.
 """
 
 import json
@@ -35,7 +37,7 @@ import time
 import frappe
 from frappe.utils import add_to_date, now_datetime
 
-from hisi.api.ai import llm_client
+from hisi.api.ai import llm_client, report_pdf
 from hisi.api.ai.benefits_registry import matched_benefits_lines
 from hisi.api.ai.prompt import (
 	CORRECTIVE_MESSAGE,
@@ -48,12 +50,15 @@ from hisi.api.ai.prompt import (
 from hisi.api.ai.settings import get_ai_data_sources, get_ai_settings
 from hisi.api.patient import (
 	fetch_patient_contributions,
+	med_claim_search_path,
+	med_preauth_search_path,
 	step_claims,
 	step_consent,
 	step_eligibility,
 	step_patient,
 	step_preauth,
 	step_records_multi,
+	visit_claim_context,
 )
 from hisi.api.response_handler import BadRequest, NotFound, UpstreamError
 
@@ -62,6 +67,13 @@ REPORT = "HISI Discrepancy Report"
 #: AD-4 sweep window: a ``Processing`` report is stuck once 2 x
 #: total_timeout_sec have passed since it started.
 _STUCK_MULTIPLIER = 2
+
+#: A ``Queued`` report is lost once 4 x total_timeout_sec have passed since
+#: creation: a claim normally lands within seconds, and even a legitimately
+#: queued job waits at most one in-flight run (the single worker's queue slot
+#: is bounded by total_timeout_sec) — beyond that, the enqueued job was never
+#: claimed (worker died pre-claim, or the job was lost from the queue).
+_QUEUED_STUCK_MULTIPLIER = 2 * _STUCK_MULTIPLIER
 
 
 class _WorkerFailure(Exception):
@@ -82,6 +94,13 @@ def run_discrepancy_report(report_name: str) -> None:
 	if not _claim_processing(report_name):
 		frappe.logger("hisi.ai").info(f"run_discrepancy_report: {report_name!r} not claimable; skipping")
 		return
+	# Persist the claim now instead of at the terminal update: the LLM stage runs
+	# for minutes, and a worker killed mid-run used to roll the claim back — the
+	# row sat ``Queued`` forever and the sweep never saw it. Committed, an
+	# in-flight run reads ``Processing`` in the UI and a crashed worker leaves a
+	# sweep-able row.
+	if not frappe.flags.in_test:
+		frappe.db.commit()
 	settings = get_ai_settings()
 	t0 = time.monotonic()
 
@@ -159,9 +178,23 @@ def run_discrepancy_report(report_name: str) -> None:
 			normalized,
 			model=str(settings.llm_model or ""),
 		)
+		# The deliverable is a PDF (the markdown is kept on the doc as the
+		# plain-text record). Best-effort render: a host missing the PDF
+		# engine degrades to a report without a PDF file, never a failure.
+		pdf_bytes = None
+		try:
+			pdf_bytes = report_pdf.build_report_pdf_bytes(
+				str(doc.subject_cr_id or ""),
+				str(doc.subject_name or ""),
+				normalized,
+				model=str(settings.llm_model or ""),
+			)
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"report pdf render {report_name}")
 		_mark_success(
 			report_name,
 			duration_ms(),
+			pdf_bytes=pdf_bytes,
 			report=markdown,
 			findings=json.dumps(normalized, ensure_ascii=False),
 			raw_response=raw or "",
@@ -176,14 +209,19 @@ def run_discrepancy_report(report_name: str) -> None:
 
 
 def sweep_stuck_reports() -> int:
-	"""Mark stuck ``Processing`` reports ``Failed`` / ``WORKER_CRASHED`` (daily).
+	"""Mark stuck reports ``Failed`` (daily) — the pre-terminal states the
+	worker lifecycle can orphan:
 
-	A report is stuck when it has been in ``Processing`` for more than
-	``2 x total_timeout_sec`` — compared against ``started_at`` (the atomic
-	claim wrote it), falling back to the doc ``modified`` timestamp when
-	``started_at`` is null. One guarded UPDATE per report (``status =
-	'Processing'`` guard keeps the sweep idempotent and race-safe); a second
-	sweep finds nothing → 0.
+	- ``Processing`` older than 2 x total_timeout → ``WORKER_CRASHED`` (compared
+	  against ``started_at`` — the atomic claim wrote it — falling back to the
+	  doc ``modified`` timestamp when it is null).
+	- ``Queued`` older than 4 x total_timeout → ``WORKER_LOST`` (the job was
+	  never claimed: the worker died before the claim could land, or the
+	  enqueued job was lost from the queue; nothing else would ever pick it up,
+	  so a plain ``Queued`` badge would mislead forever).
+
+	One guarded UPDATE per report (the ``status`` guard keeps the sweep
+	idempotent and race-safe); a second sweep finds nothing → 0.
 	"""
 	settings = get_ai_settings()
 	threshold_sec = _STUCK_MULTIPLIER * int(settings.llm_total_timeout_sec)
@@ -213,9 +251,31 @@ def sweep_stuck_reports() -> int:
 		)
 		if affected:
 			swept += 1
+	# Stale ``Queued`` rows: the job was never claimed (worker died before the
+	# claim, or the enqueued job was lost) — nothing else would ever pick it up.
+	queued_threshold = _QUEUED_STUCK_MULTIPLIER * int(settings.llm_total_timeout_sec)
+	queued_cutoff = add_to_date(now_datetime(), seconds=-queued_threshold)
+	for row in frappe.get_all(REPORT, filters={"status": "Queued"}, fields=["name", "creation"]):
+		if row["creation"] is None or row["creation"] >= queued_cutoff:
+			continue
+		error = json.dumps(
+			{
+				"code": "WORKER_LOST",
+				"message": (
+					f"report sat in Queued for more than {_QUEUED_STUCK_MULTIPLIER} x total_timeout_sec "
+					f"({queued_threshold}s) without a worker claim; the enqueued job was lost (daily sweep)"
+				),
+			}
+		)
+		affected = frappe.db.execute_query(
+			"UPDATE `tabHISI Discrepancy Report` SET status = %s, error = %s, finished_at = %s WHERE name = %s AND status = %s",
+			("Failed", error, now_datetime(), row["name"], "Queued"),
+		)
+		if affected:
+			swept += 1
 	if swept and not frappe.flags.in_test:
 		frappe.db.commit()
-		frappe.logger("hisi.ai").info(f"sweep_stuck_reports: marked {swept} stuck report(s) failed (WORKER_CRASHED)")
+		frappe.logger("hisi.ai").info(f"sweep_stuck_reports: marked {swept} stuck report(s) failed")
 	return swept
 
 
@@ -271,7 +331,124 @@ def _fetch_context(doc) -> tuple:
 			errors[step] = exc.message or str(exc)
 		except Exception as exc:
 			errors[step] = str(exc)
+	_attach_visit_links(results, errors)
 	return sources, results, errors
+
+
+def _attach_visit_links(results: dict, errors: dict) -> None:
+	"""The claim<->visit join for the per-visit comparison (see
+	``visit_claim_context``): each claim's ``bundle_id`` points at the Shared
+	Health Record the claim was submitted in, and that SHR's FHIR bundle
+	carries the Encounter whose ``episodeOfCare`` is the visit (the consent
+	``visit_id`` space). The submitted bundles become the SHR side of the
+	per-visit comparison and land in ``results["visits"]`` alongside the
+	consented visits. Claim-driven: it runs whenever any claim/preauth
+	record is present, even if the consent step failed. Fail-soft: a join
+	failure is recorded in errors and never sinks the run."""
+	try:
+		routes = {"claims": med_claim_search_path(), "preauth": med_preauth_search_path()}
+	except (BadRequest, NotFound, UpstreamError) as exc:
+		errors["visit_join"] = "claim route unavailable: {}".format(exc.message or exc)
+		return
+	except Exception as exc:
+		errors["visit_join"] = "claim route unavailable: {}".format(exc)
+		return
+	claim_routes = []
+	for step in ("claims", "preauth"):
+		data = results.get(step)
+		if not isinstance(data, dict):
+			continue
+		for record in data.get("records") or []:
+			if isinstance(record, dict):
+				claim_routes.append((record, routes[step]))
+	if not claim_routes:
+		return
+	try:
+		claim_map, by_visit, problems = visit_claim_context(claim_routes)
+	except (BadRequest, NotFound, UpstreamError) as exc:
+		errors["visit_join"] = exc.message or str(exc)
+		return
+	except Exception as exc:
+		errors["visit_join"] = str(exc)
+		return
+	if problems:
+		errors["visit_join"] = "; ".join(problems)
+	for step in ("claims", "preauth"):
+		data = results.get(step)
+		if not isinstance(data, dict):
+			continue
+		for record in data.get("records") or []:
+			if not isinstance(record, dict):
+				continue
+			visit_id = claim_map.get(str(record.get("name") or "").strip())
+			if visit_id:
+				record["visit_id"] = visit_id
+	# Consent side: the consent step may have succeeded with zero records
+	# (consented = False is then a real finding) or errored entirely
+	# (consented = None — the model must not guess).
+	consent = results.get("consent")
+	consent_records = consent.get("records") if isinstance(consent, dict) else None
+	consent_by_visit = {}
+	for row in consent_records or []:
+		if not isinstance(row, dict):
+			continue
+		visit_id = str(row.get("visit_id") or "").strip()
+		if visit_id:
+			consent_by_visit.setdefault(visit_id, row)
+	linked_by_visit = {}
+	for step in ("claims", "preauth"):
+		data = results.get(step)
+		if not isinstance(data, dict):
+			continue
+		for record in data.get("records") or []:
+			if not isinstance(record, dict):
+				continue
+			visit_id = str(record.get("visit_id") or "").strip()
+			if not visit_id:
+				continue
+			entry = {"kind": "preauth" if step == "preauth" else "claim"}
+			entry.update(record)
+			linked_by_visit.setdefault(visit_id, []).append(entry)
+	visits = []
+	for visit_id, row in consent_by_visit.items():
+		visits.append(
+			_visit_entry(
+				visit_id,
+				consented=True,
+				facility_id=row.get("facility_id"),
+				consent_status=row.get("consent_status"),
+				consent_creation=row.get("creation"),
+				shr_resources=by_visit.get(visit_id) or [],
+				linked_claims=linked_by_visit.get(visit_id) or [],
+			)
+		)
+	for visit_id in sorted((set(linked_by_visit) | set(by_visit)) - set(consent_by_visit)):
+		visits.append(
+			_visit_entry(
+				visit_id,
+				consented=None if consent_records is None else False,
+				shr_resources=by_visit.get(visit_id) or [],
+				linked_claims=linked_by_visit.get(visit_id) or [],
+			)
+		)
+	results["visits"] = visits
+
+
+def _visit_entry(visit_id, *, consented, shr_resources, linked_claims, facility_id=None, consent_status=None, consent_creation=None) -> dict:
+	"""One per-visit comparison bucket for the prompt context."""
+	entry = {
+		"visit_id": visit_id,
+		"consented": consented,
+		"shr_resources": shr_resources,
+		"linked_claims": linked_claims,
+	}
+	if facility_id not in (None, ""):
+		entry["facility_id"] = facility_id
+	if consent_status not in (None, ""):
+		entry["consent_status"] = consent_status
+	if consent_creation not in (None, ""):
+		entry["consent_creation"] = consent_creation
+	return entry
 
 
 def _declared_tags(doc) -> list:
@@ -326,6 +503,10 @@ def _terminal_update(report_name: str, status: str, **fields) -> bool:
 		f"UPDATE `tab{REPORT}` SET {sets} WHERE name = %s AND status = %s",
 		(*values.values(), report_name, "Processing"),
 	)
+	if not affected:
+		# the row left Processing underneath us (a concurrent retry/sweep owns the
+		# terminal state now) — log it rather than dropping the update silently
+		frappe.logger("hisi.ai").warning(f"{report_name!r} {status} update discarded (row no longer Processing)")
 	if affected and not frappe.flags.in_test:
 		# commit in production so the terminal state is visible to polling
 		# callers immediately; under the test runner the per-class rollback
@@ -334,7 +515,11 @@ def _terminal_update(report_name: str, status: str, **fields) -> bool:
 	return bool(affected)
 
 
-def _mark_success(report_name: str, duration_ms: int, **fields) -> bool:
+def _mark_success(report_name: str, duration_ms: int, pdf_bytes: bytes | None = None, **fields) -> bool:
+	if pdf_bytes:
+		# Attach before the terminal UPDATE so both rows land in the same
+		# commit (the guarded UPDATE commits in production).
+		report_pdf.attach_report_pdf(report_name, pdf_bytes)
 	ok = _terminal_update(report_name, "Success", duration_ms=duration_ms, **fields)
 	if ok:
 		frappe.logger("hisi.ai").info(f"discrepancy report {report_name!r} succeeded")

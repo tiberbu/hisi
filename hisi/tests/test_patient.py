@@ -1192,3 +1192,89 @@ class TestPatientLevelRecords(IntegrationTestCase):
             patient.fetch_patient_level_records(self.SHR_ID)
         host = "healthlake.{}.amazonaws.com".format(self.REGION)
         self.assertEqual(mock_get.call_args.args[0], "https://{}/datastore/{}/r4/Observation?subject={}".format(host, self.DATA_STORE_ID, self.SHR_ID))
+
+
+class TestVisitClaimContext(IntegrationTestCase):
+    """The claim<->visit join: claim bundle_id -> Shared Health Record ->
+    the submitted FHIR bundle -> the Encounter's episodeOfCare (the consent
+    visit_id space)."""
+
+    BUNDLE = {
+        "id": "b-ok",
+        "entry": [
+            {"resource": {"resourceType": "Claim", "id": "c1"}},
+            {"resource": {
+                "resourceType": "Encounter",
+                "id": "enc-1",
+                "episodeOfCare": [{"reference": "EpisodeOfCare/v-1"}],
+            }},
+        ],
+    }
+
+    def test_visit_from_fhir_bundle_episode_of_care_reference(self):
+        self.assertEqual(patient.visit_from_fhir_bundle(self.BUNDLE), "v-1")
+
+    def test_visit_from_fhir_bundle_visit_identifier_fallback(self):
+        bundle = {"entry": [{
+            "resource": {
+                "resourceType": "Encounter",
+                "identifier": [{"system": "https://x/fhir/identifier/visit", "value": "visit-1"}],
+            },
+        }]}
+        self.assertEqual(patient.visit_from_fhir_bundle(bundle), "visit-1")
+
+    def test_visit_from_fhir_bundle_no_encounter(self):
+        bundle = {"entry": [{"resource": {"resourceType": "Claim", "id": "c1"}}]}
+        self.assertEqual(patient.visit_from_fhir_bundle(bundle), "")
+        self.assertEqual(patient.visit_from_fhir_bundle(None), "")
+
+    def test_parse_shr_fhir_payload_json_python_repr_and_garbage(self):
+        self.assertEqual(patient.parse_shr_fhir_payload('{"id": "b1"}'), {"id": "b1"})
+        # UAT rows store the payload as a Python dict repr (single quotes)
+        self.assertEqual(patient.parse_shr_fhir_payload("{'id': 'b1'}"), {"id": "b1"})
+        self.assertEqual(patient.parse_shr_fhir_payload({"id": "b1"}), {"id": "b1"})
+        self.assertIsNone(patient.parse_shr_fhir_payload(""))
+        self.assertIsNone(patient.parse_shr_fhir_payload(None))
+        self.assertIsNone(patient.parse_shr_fhir_payload("not a payload"))
+
+    def test_visit_claim_context_links_claim_via_shr_bundle(self):
+        with patch.object(patient, "http_get", return_value={"data": [{"name": "b-ok", "fhir_request": json.dumps(self.BUNDLE)}]}):
+            claim_map, by_visit, problems = patient.visit_claim_context([({"name": "c1", "bundle_id": "b-ok"}, "/v1/med/resource/Claim Record")])
+        self.assertEqual(claim_map, {"c1": "v-1"})
+        self.assertEqual(problems, [])
+        self.assertEqual([resource["resourceType"] for resource in by_visit["v-1"]], ["Claim", "Encounter"])
+
+    def test_visit_claim_context_dedupes_bundles_and_collects_problems(self):
+        calls = []
+
+        def fake_http_get(url, params, bearer=True, basic=""):
+            calls.append((url, params.get("filters")))
+            if "b-bad" in params.get("filters", ""):
+                raise patient.UpstreamError("SHR lookup failed")
+            return {"data": [{"name": "b-ok", "fhir_request": json.dumps(self.BUNDLE)}]}
+
+        with patch.object(patient, "http_get", side_effect=fake_http_get):
+            claim_map, by_visit, problems = patient.visit_claim_context(
+                [
+                    ({"name": "c1", "bundle_id": "b-ok"}, "/v1/med/resource/Claim Record"),
+                    ({"name": "c2", "bundle_id": "b-ok"}, "/v1/med/resource/Claim Record"),
+                    ({"name": "c3", "bundle_id": "b-bad"}, "/v1/preauth/resource/Claim Record"),
+                    ({"name": "c4"}, "/v1/med/resource/Claim Record"),
+                ]
+            )
+        self.assertEqual(claim_map, {"c1": "v-1", "c2": "v-1", "c3": "", "c4": ""})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("b-bad", problems[0])
+        # the shared bundle is fetched once; the preauth claim's bundle is
+        # looked up under the preauth route
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][1], '[["name", "=", "b-ok"]]')
+        self.assertIn("/v1/preauth/resource/Shared Health Record", calls[1][0])
+        self.assertEqual(calls[1][1], '[["name", "=", "b-bad"]]')
+
+    def test_visit_claim_context_shr_without_payload_leaves_claim_unlinked(self):
+        with patch.object(patient, "http_get", return_value={"data": [{"name": "b-empty", "fhir_request": ""}]}):
+            claim_map, by_visit, problems = patient.visit_claim_context([({"name": "c1", "bundle_id": "b-empty"}, "/v1/med/resource/Claim Record")])
+        self.assertEqual(claim_map, {"c1": ""})
+        self.assertEqual(by_visit, {})
+        self.assertEqual(problems, [])
