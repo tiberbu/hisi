@@ -1,12 +1,14 @@
 # Copyright (c) 2026, Tiberbu and contributors
 # For license information, please see license.txt
 
+import base64
 import io
 import json
 from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
+from frappe.utils import add_to_date, now_datetime
 
 from hisi.api.ai import api as ai_api
 from hisi.api.ai import report_pdf
@@ -547,3 +549,175 @@ class TestGenerateApi(IntegrationTestCase):
 	def test_generate_requires_cr_id(self):
 		ai_api.generate_discrepancy_report(data={"tag_codes": []})
 		self.assertEqual(frappe.local.response["http_status_code"], 400)
+
+
+class TestReportPdfApi(IntegrationTestCase):
+	"""The PDF feed: a completed report without an attached file is rendered
+	on demand (runs that predate the PDF deliverable); a failed run 404s."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.local.response = frappe._dict()
+		self._commit_patcher = patch.object(frappe.db, "commit")
+		self._commit_patcher.start()
+
+	def tearDown(self):
+		self._commit_patcher.stop()
+		super().tearDown()
+
+	def test_get_report_pdf_lazy_renders_completed_report_without_file(self):
+		doc = _make_report(cr_id="CRPDF")
+		frappe.db.set_value(REPORT, doc.name, "status", "Success")
+		frappe.db.set_value(
+			REPORT, doc.name, "findings", json.dumps({"summary": "s", "overall": "clean", "findings": []})
+		)
+		with patch.object(report_pdf, "build_report_pdf_bytes", return_value=_fake_pdf_bytes()):
+			ai_api.get_discrepancy_report_pdf(name=doc.name)
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 200)
+		self.assertTrue(base64.b64decode(resp["data"]["content_b64"]).startswith(b"%PDF"))
+		# the rendered file is attached for subsequent reads
+		files = frappe.get_all(
+			"File",
+			filters={"attached_to_doctype": REPORT, "attached_to_name": doc.name},
+			fields=["file_name"],
+		)
+		self.assertEqual([f.file_name for f in files], [f"{doc.name}.pdf"])
+
+	def test_get_report_pdf_404_for_failed_run(self):
+		doc = _make_report(cr_id="CRPDFFAIL")
+		frappe.db.set_value(REPORT, doc.name, "status", "Failed")
+		with patch.object(report_pdf, "build_report_pdf_bytes") as mock_build:
+			ai_api.get_discrepancy_report_pdf(name=doc.name)
+		mock_build.assert_not_called()
+		self.assertEqual(frappe.local.response["http_status_code"], 404)
+
+
+class TestRetryApi(IntegrationTestCase):
+	"""In-place re-run: a Failed job resets to Queued (error/finished_at
+	cleared) and re-enqueues; a stuck Queued job re-enqueues; Processing and
+	Success refuse with 409 (force-generate for a fresh run instead)."""
+
+	def setUp(self):
+		super().setUp()
+		frappe.local.response = frappe._dict()
+		# the API's commit is guarded by in_test, but patch it anyway so a
+		# guard slip can never leak the seeded docs past the class rollback
+		self._commit_patcher = patch.object(frappe.db, "commit")
+		self._commit_patcher.start()
+
+	def tearDown(self):
+		self._commit_patcher.stop()
+		super().tearDown()
+
+	def _failed(self, cr_id: str) -> str:
+		doc = _make_report(cr_id=cr_id)
+		frappe.db.set_value(REPORT, doc.name, "status", "Failed")
+		frappe.db.set_value(
+			REPORT, doc.name, "error", json.dumps({"code": "LLM_TIMEOUT", "message": "the run blew up"})
+		)
+		frappe.db.set_value(REPORT, doc.name, "finished_at", "2026-11-11 00:00:00")
+		return doc.name
+
+	def test_retry_failed_report_resets_and_enqueues(self):
+		name = self._failed("CRRETRY")
+		with patch.object(frappe, "enqueue") as mock_enqueue:
+			ai_api.retry_discrepancy_report(name=name)
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 202)
+		self.assertEqual(resp["status"], "success")
+		self.assertEqual(resp["data"], {"report": name, "status": "queued"})
+		mock_enqueue.assert_called_once()
+		# the reset is a guarded raw UPDATE — read the terminal state
+		# cache-less (the fork keeps a per-key value cache)
+		row = frappe.db.get_value(REPORT, name, ["status", "error", "finished_at"], as_dict=True, cache=False)
+		self.assertEqual(row["status"], "Queued")
+		self.assertIsNone(row["error"])
+		self.assertIsNone(row["finished_at"])
+
+	def test_retry_queued_report_reenqueues(self):
+		doc = _make_report(cr_id="CRRETRYQ")  # _make_report leaves it Queued
+		with patch.object(frappe, "enqueue") as mock_enqueue:
+			ai_api.retry_discrepancy_report(name=doc.name)
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 202)
+		self.assertEqual(resp["data"], {"report": doc.name, "status": "queued"})
+		mock_enqueue.assert_called_once()
+
+	def test_retry_processing_refused(self):
+		doc = _make_report(cr_id="CRRETRYP")
+		frappe.db.set_value(REPORT, doc.name, "status", "Processing")
+		with patch.object(frappe, "enqueue") as mock_enqueue:
+			ai_api.retry_discrepancy_report(name=doc.name)
+		self.assertEqual(frappe.local.response["http_status_code"], 409)
+		mock_enqueue.assert_not_called()
+
+	def test_retry_success_refused(self):
+		doc = _make_report(cr_id="CRRETRYD")
+		frappe.db.set_value(REPORT, doc.name, "status", "Success")
+		with patch.object(frappe, "enqueue") as mock_enqueue:
+			ai_api.retry_discrepancy_report(name=doc.name)
+		self.assertEqual(frappe.local.response["http_status_code"], 409)
+		mock_enqueue.assert_not_called()
+
+	def test_retry_unknown_name_404(self):
+		ai_api.retry_discrepancy_report(name="HIS-DRP-2026-0999")
+		self.assertEqual(frappe.local.response["http_status_code"], 404)
+
+
+class TestSweepStuckReports(IntegrationTestCase):
+	"""The daily sweep fails the pre-terminal states the worker lifecycle can
+	orphan: ``Processing`` past 2 x total_timeout → WORKER_CRASHED, ``Queued``
+	past 4 x total_timeout → WORKER_LOST. Fresh rows are untouched and a second
+	sweep is a no-op (guarded UPDATE)."""
+
+	def setUp(self):
+		super().setUp()
+		_clear_ai_single()
+
+	def _stale(self, doc, status: str) -> None:
+		ts = add_to_date(now_datetime(), days=-1)
+		frappe.db.set_value(REPORT, doc.name, "status", status)
+		frappe.db.set_value(REPORT, doc.name, "creation", ts)
+		frappe.db.set_value(REPORT, doc.name, "modified", ts)
+		if status == "Processing":
+			frappe.db.set_value(REPORT, doc.name, "started_at", ts)
+
+	def test_sweep_fails_stale_processing(self):
+		doc = _make_report(cr_id="CRSWEEPP")
+		self._stale(doc, "Processing")
+		worker.sweep_stuck_reports()
+		row = _terminal(doc.name)
+		self.assertEqual(row["status"], "Failed")
+		self.assertEqual(json.loads(row["error"])["code"], "WORKER_CRASHED")
+		self.assertIsNotNone(frappe.db.get_value(REPORT, doc.name, "finished_at", cache=False))
+
+	def test_sweep_fails_stale_queued(self):
+		doc = _make_report(cr_id="CRSWEEPQ")
+		self._stale(doc, "Queued")
+		worker.sweep_stuck_reports()
+		row = _terminal(doc.name)
+		self.assertEqual(row["status"], "Failed")
+		self.assertEqual(json.loads(row["error"])["code"], "WORKER_LOST")
+		self.assertIsNotNone(frappe.db.get_value(REPORT, doc.name, "finished_at", cache=False))
+
+	def test_sweep_ignores_fresh_rows(self):
+		doc_q = _make_report(cr_id="CRSWEEPF")
+		doc_p = _make_report(cr_id="CRSWEEFP")
+		frappe.db.set_value(REPORT, doc_p.name, "status", "Processing")
+		frappe.db.set_value(REPORT, doc_p.name, "started_at", now_datetime())
+		worker.sweep_stuck_reports()
+		self.assertEqual(frappe.db.get_value(REPORT, doc_q.name, "status", cache=False), "Queued")
+		self.assertEqual(frappe.db.get_value(REPORT, doc_p.name, "status", cache=False), "Processing")
+
+	def test_sweep_is_idempotent(self):
+		doc = _make_report(cr_id="CRSWEEPI")
+		self._stale(doc, "Queued")
+		worker.sweep_stuck_reports()
+		row = _terminal(doc.name)
+		self.assertEqual(row["status"], "Failed")
+		first_error, first_finished = row["error"], frappe.db.get_value(REPORT, doc.name, "finished_at", cache=False)
+		worker.sweep_stuck_reports()
+		row2 = _terminal(doc.name)
+		self.assertEqual(row2["error"], first_error)
+		self.assertEqual(frappe.db.get_value(REPORT, doc.name, "finished_at", cache=False), first_finished)

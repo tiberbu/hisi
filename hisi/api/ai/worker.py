@@ -26,7 +26,9 @@ Fail-closed: an unconfigured LLM host fails the job immediately with
 
 The daily ``sweep_stuck_reports`` (registered in ``hooks.scheduler_events``)
 marks ``Processing`` reports older than 2 x total_timeout as ``Failed`` /
-``WORKER_CRASHED`` — a crashed worker is thereby detectable.
+``WORKER_CRASHED`` and ``Queued`` reports older than 4 x total_timeout as
+``Failed`` / ``WORKER_LOST`` — a crashed or job-losing worker is detectable
+instead of leaving a report stuck in a pre-terminal state.
 """
 
 import json
@@ -66,6 +68,13 @@ REPORT = "HISI Discrepancy Report"
 #: total_timeout_sec have passed since it started.
 _STUCK_MULTIPLIER = 2
 
+#: A ``Queued`` report is lost once 4 x total_timeout_sec have passed since
+#: creation: a claim normally lands within seconds, and even a legitimately
+#: queued job waits at most one in-flight run (the single worker's queue slot
+#: is bounded by total_timeout_sec) — beyond that, the enqueued job was never
+#: claimed (worker died pre-claim, or the job was lost from the queue).
+_QUEUED_STUCK_MULTIPLIER = 2 * _STUCK_MULTIPLIER
+
 
 class _WorkerFailure(Exception):
 	"""A closed-set worker failure: ``(code, message)`` for the error field."""
@@ -85,6 +94,13 @@ def run_discrepancy_report(report_name: str) -> None:
 	if not _claim_processing(report_name):
 		frappe.logger("hisi.ai").info(f"run_discrepancy_report: {report_name!r} not claimable; skipping")
 		return
+	# Persist the claim now instead of at the terminal update: the LLM stage runs
+	# for minutes, and a worker killed mid-run used to roll the claim back — the
+	# row sat ``Queued`` forever and the sweep never saw it. Committed, an
+	# in-flight run reads ``Processing`` in the UI and a crashed worker leaves a
+	# sweep-able row.
+	if not frappe.flags.in_test:
+		frappe.db.commit()
 	settings = get_ai_settings()
 	t0 = time.monotonic()
 
@@ -193,14 +209,19 @@ def run_discrepancy_report(report_name: str) -> None:
 
 
 def sweep_stuck_reports() -> int:
-	"""Mark stuck ``Processing`` reports ``Failed`` / ``WORKER_CRASHED`` (daily).
+	"""Mark stuck reports ``Failed`` (daily) — the pre-terminal states the
+	worker lifecycle can orphan:
 
-	A report is stuck when it has been in ``Processing`` for more than
-	``2 x total_timeout_sec`` — compared against ``started_at`` (the atomic
-	claim wrote it), falling back to the doc ``modified`` timestamp when
-	``started_at`` is null. One guarded UPDATE per report (``status =
-	'Processing'`` guard keeps the sweep idempotent and race-safe); a second
-	sweep finds nothing → 0.
+	- ``Processing`` older than 2 x total_timeout → ``WORKER_CRASHED`` (compared
+	  against ``started_at`` — the atomic claim wrote it — falling back to the
+	  doc ``modified`` timestamp when it is null).
+	- ``Queued`` older than 4 x total_timeout → ``WORKER_LOST`` (the job was
+	  never claimed: the worker died before the claim could land, or the
+	  enqueued job was lost from the queue; nothing else would ever pick it up,
+	  so a plain ``Queued`` badge would mislead forever).
+
+	One guarded UPDATE per report (the ``status`` guard keeps the sweep
+	idempotent and race-safe); a second sweep finds nothing → 0.
 	"""
 	settings = get_ai_settings()
 	threshold_sec = _STUCK_MULTIPLIER * int(settings.llm_total_timeout_sec)
@@ -230,9 +251,31 @@ def sweep_stuck_reports() -> int:
 		)
 		if affected:
 			swept += 1
+	# Stale ``Queued`` rows: the job was never claimed (worker died before the
+	# claim, or the enqueued job was lost) — nothing else would ever pick it up.
+	queued_threshold = _QUEUED_STUCK_MULTIPLIER * int(settings.llm_total_timeout_sec)
+	queued_cutoff = add_to_date(now_datetime(), seconds=-queued_threshold)
+	for row in frappe.get_all(REPORT, filters={"status": "Queued"}, fields=["name", "creation"]):
+		if row["creation"] is None or row["creation"] >= queued_cutoff:
+			continue
+		error = json.dumps(
+			{
+				"code": "WORKER_LOST",
+				"message": (
+					f"report sat in Queued for more than {_QUEUED_STUCK_MULTIPLIER} x total_timeout_sec "
+					f"({queued_threshold}s) without a worker claim; the enqueued job was lost (daily sweep)"
+				),
+			}
+		)
+		affected = frappe.db.execute_query(
+			"UPDATE `tabHISI Discrepancy Report` SET status = %s, error = %s, finished_at = %s WHERE name = %s AND status = %s",
+			("Failed", error, now_datetime(), row["name"], "Queued"),
+		)
+		if affected:
+			swept += 1
 	if swept and not frappe.flags.in_test:
 		frappe.db.commit()
-		frappe.logger("hisi.ai").info(f"sweep_stuck_reports: marked {swept} stuck report(s) failed (WORKER_CRASHED)")
+		frappe.logger("hisi.ai").info(f"sweep_stuck_reports: marked {swept} stuck report(s) failed")
 	return swept
 
 
@@ -460,6 +503,10 @@ def _terminal_update(report_name: str, status: str, **fields) -> bool:
 		f"UPDATE `tab{REPORT}` SET {sets} WHERE name = %s AND status = %s",
 		(*values.values(), report_name, "Processing"),
 	)
+	if not affected:
+		# the row left Processing underneath us (a concurrent retry/sweep owns the
+		# terminal state now) — log it rather than dropping the update silently
+		frappe.logger("hisi.ai").warning(f"{report_name!r} {status} update discarded (row no longer Processing)")
 	if affected and not frappe.flags.in_test:
 		# commit in production so the terminal state is visible to polling
 		# callers immediately; under the test runner the per-class rollback
@@ -468,30 +515,11 @@ def _terminal_update(report_name: str, status: str, **fields) -> bool:
 	return bool(affected)
 
 
-def _attach_report_pdf(report_name: str, pdf_bytes: bytes) -> str:
-	"""The run's PDF deliverable: one private File attached to the report
-	job. ``content`` must be in the doc at construction time (the platform
-	pattern): without it, ``File.is_remote_file`` is True and ``insert()``
-	would die in ``validate_file_on_disk``."""
-	file_doc = frappe.get_doc(
-		{
-			"doctype": "File",
-			"file_name": f"{report_name}.pdf",
-			"is_private": 1,
-			"attached_to_doctype": REPORT,
-			"attached_to_name": report_name,
-			"content": pdf_bytes,
-		}
-	)
-	file_doc.insert(ignore_permissions=True)
-	return file_doc.name
-
-
 def _mark_success(report_name: str, duration_ms: int, pdf_bytes: bytes | None = None, **fields) -> bool:
 	if pdf_bytes:
 		# Attach before the terminal UPDATE so both rows land in the same
 		# commit (the guarded UPDATE commits in production).
-		_attach_report_pdf(report_name, pdf_bytes)
+		report_pdf.attach_report_pdf(report_name, pdf_bytes)
 	ok = _terminal_update(report_name, "Success", duration_ms=duration_ms, **fields)
 	if ok:
 		frappe.logger("hisi.ai").info(f"discrepancy report {report_name!r} succeeded")

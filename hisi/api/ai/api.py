@@ -6,6 +6,8 @@
 - ``list_discrepancy_tags``       the tag catalog (the discrepancy vocabulary).
 - ``generate_discrepancy_report`` create the report job (``Queued``) and
   enqueue the async worker; returns 202 ``{report, status}`` for polling.
+- ``retry_discrepancy_report``    re-run a Failed job (reset to ``Queued``,
+  error cleared) or re-enqueue a stuck ``Queued`` one; 409 otherwise.
 - ``get_discrepancy_report``      one job's current state + result.
 - ``list_discrepancy_reports``    recent jobs (optionally per CR ID/status).
 - ``chat``                        one synchronous chat completion (optionally
@@ -27,7 +29,7 @@ import json
 
 import frappe
 
-from hisi.api.ai import llm_client
+from hisi.api.ai import llm_client, report_pdf
 from hisi.api.ai.benefits_registry import matched_benefits_lines
 from hisi.api.ai.prompt import DEFAULT_SYSTEM_PROMPT, build_data_context, effective_benefits_reference
 from hisi.api.ai.seed import ensure_default_tags
@@ -38,7 +40,7 @@ from hisi.api.patient import (
 	step_consent,
 	step_preauth,
 )
-from hisi.api.response_handler import APIResponse, BadRequest, NotFound, UpstreamError, api_endpoint
+from hisi.api.response_handler import APIResponse, BadRequest, Conflict, NotFound, UpstreamError, api_endpoint
 
 REPORT = "HISI Discrepancy Report"
 TAG = "HISI Discrepancy Tag"
@@ -148,6 +150,50 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 	return APIResponse.success(data={"report": doc.name, "status": "queued"}, status=202)
 
 
+@frappe.whitelist(methods=["POST"])
+@api_endpoint
+def retry_discrepancy_report(name: str) -> None:
+	"""Re-run an existing job in place (no new job, no new tag selection).
+
+	A ``Failed`` job is reset to ``Queued`` (one guarded UPDATE — the error
+	and finished_at are cleared) and the worker is enqueued again; a stuck
+	``Queued`` job is simply re-enqueued (the worker's atomic claim keeps a
+	double enqueue harmless: the loser skips with "not claimable"). A
+	``Processing`` job is refused 409 — it may still be live (the daily
+	sweep marks crashed runs failed, after which a retry is possible); a
+	``Success`` job 409s too — generate with ``force`` for a fresh run.
+	"""
+	name = str(name or "").strip()
+	if not name:
+		raise BadRequest("name is required.")
+	try:
+		doc = frappe.get_doc(REPORT, name)
+	except frappe.DoesNotExistError:
+		raise NotFound(f"Discrepancy report {name!r} not found.")
+	if doc.status == "Success":
+		raise Conflict(f"{name!r} already completed — generate with force to run it again.")
+	if doc.status == "Processing":
+		raise Conflict(f"{name!r} is still running (a crashed run is marked failed by the daily sweep, then retryable).")
+	if doc.status == "Failed":
+		affected = frappe.db.execute_query(
+			"UPDATE `tabHISI Discrepancy Report` SET status = %s, error = NULL, finished_at = NULL WHERE name = %s AND status = %s",
+			("Queued", name, "Failed"),
+		)
+		if not affected:
+			raise Conflict(f"{name!r} changed state before the retry; reload and try again.")
+	settings = get_ai_settings()
+	frappe.enqueue(
+		"hisi.api.ai.worker.run_discrepancy_report",
+		queue="long",
+		timeout=int(settings.llm_total_timeout_sec) + 300,
+		job_id=name,
+		report_name=name,
+	)
+	if not frappe.flags.in_test:
+		frappe.db.commit()
+	return APIResponse.success(data={"report": name, "status": "queued"}, status=202)
+
+
 @frappe.whitelist(methods=["GET", "POST"])
 @api_endpoint
 def get_discrepancy_report(name: str) -> None:
@@ -205,10 +251,45 @@ def _attached_report_pdf(report_name: str) -> dict | None:
 			}
 	return None
 
+def _render_and_attach_pdf(doc) -> dict | None:
+	"""Lazy render for a completed report without a PDF file — the runs that
+	predate the PDF deliverable (or one whose best-effort render failed).
+	Rebuilds the PDF from the stored normalized findings and attaches it, so
+	any completed report can be previewed/downloaded on demand; the file
+	stays for subsequent reads."""
+	try:
+		findings = json.loads(doc.findings) if doc.findings else None
+	except (json.JSONDecodeError, ValueError):
+		findings = None
+	if not isinstance(findings, dict):
+		return None
+	try:
+		pdf_bytes = report_pdf.build_report_pdf_bytes(
+			str(doc.subject_cr_id or ""),
+			str(doc.subject_name or ""),
+			findings,
+			model=str(doc.model or ""),
+		)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"lazy report pdf render {doc.name}")
+		return None
+	try:
+		report_pdf.attach_report_pdf(doc.name, pdf_bytes)
+		if not frappe.flags.in_test:
+			frappe.db.commit()
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"lazy report pdf attach {doc.name}")
+		return None
+	return _attached_report_pdf(doc.name)
+
 @frappe.whitelist(methods=["GET", "POST"])
 @api_endpoint
 def get_discrepancy_report_pdf(name: str) -> None:
-	"""The report's PDF deliverable as base64 (the preview/download feed)."""
+	"""The report's PDF deliverable as base64 (the preview/download feed).
+
+	A completed report without an attached file (a run that predates the
+	PDF deliverable) is rendered on demand from its stored findings, so
+	every completed report can be previewed and downloaded."""
 	name = str(name or "").strip()
 	if not name:
 		raise BadRequest("name is required.")
@@ -217,8 +298,10 @@ def get_discrepancy_report_pdf(name: str) -> None:
 	except frappe.DoesNotExistError:
 		raise NotFound(f"Discrepancy report {name!r} not found.")
 	attached = _attached_report_pdf(doc.name)
+	if not attached and doc.status == "Success":
+		attached = _render_and_attach_pdf(doc)
 	if not attached:
-		raise NotFound("No PDF for this report (the run did not produce a PDF file).")
+		raise NotFound("No PDF for this report (a PDF could not be rendered for it).")
 	file_doc = frappe.get_doc("File", attached["name"])
 	content = file_doc.get_content()
 	raw = content if isinstance(content, bytes) else str(content).encode("utf-8")

@@ -15,6 +15,8 @@ Palette mirrors the app theme (success / warning / destructive tokens).
 
 import html
 
+import frappe
+
 #: (foreground, background) per severity / overall level — app theme colors.
 _SEVERITY_COLORS = {
 	"high": ("#9b1c1c", "#fde8e8"),
@@ -150,3 +152,22 @@ def build_report_pdf_bytes(
 	import pdfkit
 
 	return pdfkit.from_string(render_report_html(cr_id, subject_name, result, model), False)
+
+
+def attach_report_pdf(report_name: str, pdf_bytes: bytes) -> str:
+	"""The run's PDF deliverable: one private File attached to the report
+	job. ``content`` must be in the doc at construction time (the platform
+	pattern): without it, ``File.is_remote_file`` is True and ``insert()``
+	would die in ``validate_file_on_disk``."""
+	file_doc = frappe.get_doc(
+		{
+			"doctype": "File",
+			"file_name": f"{report_name}.pdf",
+			"is_private": 1,
+			"attached_to_doctype": "HISI Discrepancy Report",
+			"attached_to_name": report_name,
+			"content": pdf_bytes,
+		}
+	)
+	file_doc.insert(ignore_permissions=True)
+	return file_doc.name
