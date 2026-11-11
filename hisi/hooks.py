@@ -165,7 +165,8 @@ app_license = "mit"
 
 scheduler_events = {
 	"daily": [
-		"hisi.api.surveillance.session.backfill_expired_sessions"
+		"hisi.api.surveillance.session.backfill_expired_sessions",
+		"hisi.api.ai.worker.sweep_stuck_reports",
 	],
 }
 

@@ -1,0 +1,167 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:intervention_code",
+ "creation": "2026-11-11 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "intervention_code",
+  "intervention_name",
+  "benefit_code",
+  "sub_benefit",
+  "complexity",
+  "tariff",
+  "facility_range",
+  "payment_mechanism",
+  "access_path",
+  "frequency",
+  "pomf_limit",
+  "mandatory_documents",
+  "mandatory_investigations",
+  "optional_documents",
+  "related_codes",
+  "benefit_name",
+  "source"
+ ],
+ "fields": [
+  {
+   "fieldname": "intervention_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Intervention Code",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "intervention_name",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Intervention Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "benefit_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Benefit Code",
+   "search_index": 1
+  },
+  {
+   "fieldname": "sub_benefit",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Sub-Benefit"
+  },
+  {
+   "fieldname": "complexity",
+   "fieldtype": "Data",
+   "label": "Complexity"
+  },
+  {
+   "fieldname": "tariff",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Tariff (KES)"
+  },
+  {
+   "fieldname": "facility_range",
+   "fieldtype": "Data",
+   "label": "Facility Range"
+  },
+  {
+   "fieldname": "payment_mechanism",
+   "fieldtype": "Small Text",
+   "label": "Payment Mechanism"
+  },
+  {
+   "fieldname": "access_path",
+   "fieldtype": "Small Text",
+   "label": "Access Path"
+  },
+  {
+   "fieldname": "frequency",
+   "fieldtype": "Data",
+   "label": "Frequency Limit"
+  },
+  {
+   "fieldname": "pomf_limit",
+   "fieldtype": "Small Text",
+   "label": "POMF Limit"
+  },
+  {
+   "fieldname": "mandatory_documents",
+   "fieldtype": "Small Text",
+   "label": "Mandatory Documents"
+  },
+  {
+   "fieldname": "mandatory_investigations",
+   "fieldtype": "Small Text",
+   "label": "Mandatory Investigations"
+  },
+  {
+   "fieldname": "optional_documents",
+   "fieldtype": "Small Text",
+   "label": "Optional Documents"
+  },
+  {
+   "description": "Cross-reference list: for document-code rows (benefit_code DOC) the intervention codes that mandatorily require the document; for interventions, related codes where relevant.",
+   "fieldname": "related_codes",
+   "fieldtype": "Long Text",
+   "label": "Related Codes"
+  },
+  {
+   "fieldname": "benefit_name",
+   "fieldtype": "Data",
+   "label": "Benefit Name"
+  },
+  {
+   "fieldname": "source",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Source"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 0,
+ "issingle": 0,
+ "modified": "2026-11-11 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hisi",
+ "name": "HISI Benefit Intervention",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "HISI Insurance Provider",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Insurance Surveillance",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "search_fields": "intervention_code, intervention_name, benefit_code",
+ "sort_field": "creation",
+ "sort_order": "desc",
+ "states": [],
+ "track_changes": 1
+}

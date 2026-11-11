@@ -1,0 +1,103 @@
+{
+	"actions": [],
+	"creation": "2026-11-11 10:00:00.000000",
+	"doctype": "DocType",
+	"engine": "InnoDB",
+	"field_order": [
+		"llm_base_url",
+		"llm_api_key",
+		"llm_model",
+		"column_break_1",
+		"llm_idle_timeout_sec",
+		"llm_total_timeout_sec",
+		"section_break_2",
+		"discrepancy_system_prompt",
+		"discrepancy_data_sources",
+		"discrepancy_max_records",
+		"benefits_reference"
+	],
+	"fields": [
+		{
+			"description": "OpenAI-compatible base URL of the LLM host, e.g. http://<llm-host>:PORT/v1",
+			"fieldname": "llm_base_url",
+			"fieldtype": "Data",
+			"label": "LLM Base URL",
+			"options": "URL"
+		},
+		{
+			"fieldname": "llm_api_key",
+			"fieldtype": "Password",
+			"label": "LLM API Key"
+		},
+		{
+			"default": "qwen3-27b",
+			"fieldname": "llm_model",
+			"fieldtype": "Data",
+			"label": "LLM Model"
+		},
+		{
+			"fieldname": "column_break_1",
+			"fieldtype": "Column Break"
+		},
+		{
+			"default": "120",
+			"fieldname": "llm_idle_timeout_sec",
+			"fieldtype": "Int",
+			"label": "SSE Idle Timeout (sec)"
+		},
+		{
+			"default": "600",
+			"fieldname": "llm_total_timeout_sec",
+			"fieldtype": "Int",
+			"label": "Total Timeout (sec)"
+		},
+		{
+			"fieldname": "section_break_2",
+			"fieldtype": "Section Break"
+		},
+		{
+			"default": "You are a health-insurance claims auditor. You are given a member's data (consents, contribution payments, claims, and preauthorizations) and a list of discrepancy checks. Compare the data strictly against the checks and report each discrepancy you can support with the data.",
+			"fieldname": "discrepancy_system_prompt",
+			"fieldtype": "Long Text",
+			"label": "Discrepancy System Prompt"
+		},
+		{
+			"default": "consent,contributions,claims,preauth",
+			"description": "Comma-separated patient_flow steps to fetch for the report. Valid: patient, eligibility, consent, records, contributions, claims, preauth.",
+			"fieldname": "discrepancy_data_sources",
+			"fieldtype": "Small Text",
+			"label": "Discrepancy Data Sources"
+		},
+		{
+			"default": "100",
+			"description": "Maximum number of records kept per data source in the prompt context.",
+			"fieldname": "discrepancy_max_records",
+			"fieldtype": "Int",
+			"label": "Discrepancy Max Records"
+		},
+		{
+			"description": "Optional benefits-rule reference (tariffs, caps, preauthorization and global-period rules) appended to the report prompt and chat system message. When empty, the built-in SHA benefits reference is used.",
+			"fieldname": "benefits_reference",
+			"fieldtype": "Long Text",
+			"label": "Benefits Reference (Prompt Context)"
+		}
+	],
+	"issingle": 1,
+	"istable": 0,
+	"modified": "2026-11-11 10:00:00.000000",
+	"modified_by": "Administrator",
+	"module": "Hisi",
+	"name": "HISI AI Settings",
+	"owner": "Guest",
+	"permissions": [
+		{
+			"read": 1,
+			"role": "System Manager",
+			"share": 1,
+			"write": 1
+		}
+	],
+	"sort_field": "modified",
+	"sort_order": "DESC",
+	"states": []
+}

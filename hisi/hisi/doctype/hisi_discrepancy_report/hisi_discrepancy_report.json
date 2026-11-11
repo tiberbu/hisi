@@ -1,0 +1,179 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "naming_series:",
+ "creation": "2026-11-11 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "subject_cr_id",
+  "subject_name",
+  "status",
+  "data_sources",
+  "column_break_1",
+  "tag_snapshot",
+  "prompt_snapshot",
+  "report",
+  "findings",
+  "raw_response",
+  "section_break_2",
+  "model",
+  "usage",
+  "started_at",
+  "finished_at",
+  "duration_ms",
+  "error"
+ ],
+ "fields": [
+  {
+   "default": "HIS-DRP-.YYYY.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Data",
+   "label": "Naming Series",
+   "options": "HIS-DRP-.YYYY.-.####"
+  },
+  {
+   "fieldname": "subject_cr_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Subject CR ID",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "subject_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Subject Name"
+  },
+  {
+   "default": "Queued",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Queued\nProcessing\nSuccess\nFailed"
+  },
+  {
+   "description": "Comma-separated patient_flow steps fetched for this report, e.g. consent,contributions,claims,preauth.",
+   "fieldname": "data_sources",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Data Sources"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "JSON snapshot of the discrepancy tags declared at generation time: [{tag_code, label, instruction, severity}]. A tag edited or deleted afterwards cannot change the prompt.",
+   "fieldname": "tag_snapshot",
+   "fieldtype": "Long Text",
+   "label": "Tag Snapshot (JSON)"
+  },
+  {
+   "description": "The exact prompt text sent to the LLM (system instructions + data context + tag lines + the fixed output contract).",
+   "fieldname": "prompt_snapshot",
+   "fieldtype": "Long Text",
+   "label": "Prompt Snapshot"
+  },
+  {
+   "description": "The rendered markdown report (success path).",
+   "fieldname": "report",
+   "fieldtype": "Long Text",
+   "label": "Report"
+  },
+  {
+   "description": "The normalized findings JSON: {summary, overall, findings: [{tag_code, severity, title, detail, evidence}]}.",
+   "fieldname": "findings",
+   "fieldtype": "Long Text",
+   "label": "Findings (JSON)"
+  },
+  {
+   "description": "The raw LLM reply (kept for audit).",
+   "fieldname": "raw_response",
+   "fieldtype": "Long Text",
+   "label": "Raw Response"
+  },
+  {
+   "fieldname": "section_break_2",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "model",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Model"
+  },
+  {
+   "fieldname": "usage",
+   "fieldtype": "Small Text",
+   "label": "Usage (JSON)"
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started At"
+  },
+  {
+   "fieldname": "finished_at",
+   "fieldtype": "Datetime",
+   "label": "Finished At"
+  },
+  {
+   "fieldname": "duration_ms",
+   "fieldtype": "Int",
+   "label": "Duration (ms)"
+  },
+  {
+   "description": "The error object JSON on failure: {code, message} — code is one of LLM_NOT_CONFIGURED, LLM_TIMEOUT, LLM_HTTP_ERROR, LLM_PARSE_FAILED, DATA_UNAVAILABLE, WORKER_CRASHED, INTERNAL_ERROR.",
+   "fieldname": "error",
+   "fieldtype": "Long Text",
+   "label": "Error (JSON)"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 0,
+ "issingle": 0,
+ "modified": "2026-11-11 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hisi",
+ "name": "HISI Discrepancy Report",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "HISI Insurance Provider",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Insurance Surveillance",
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "Desk User"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "desc",
+ "states": [],
+ "track_changes": 1
+}
