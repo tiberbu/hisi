@@ -1,6 +1,7 @@
 import os
 
 import frappe
+from hisi import brand
 
 PLATFORM_ROLES = ("System Manager",)
 
@@ -43,7 +44,9 @@ def render_email_template(name: str, args: dict | None = None) -> tuple[str, str
 	Returns ``(subject, html)``.
 	"""
 	doc = frappe.get_doc("Email Template", name)
-	html = frappe.render_template(doc.response_html or "", args or {})
+	# Brand variables come from the single brand source (hisi.brand), not
+	# from each caller.
+	html = frappe.render_template(doc.response_html or "", {**brand.context(), **(args or {})})
 	return ((doc.subject or "").strip() or name, html)
 
 

@@ -176,7 +176,6 @@ def run_discrepancy_report(report_name: str) -> None:
 			str(doc.subject_cr_id or ""),
 			str(doc.subject_name or ""),
 			normalized,
-			model=str(settings.llm_model or ""),
 		)
 		# The deliverable is a PDF (the markdown is kept on the doc as the
 		# plain-text record). Best-effort render: a host missing the PDF
@@ -187,7 +186,9 @@ def run_discrepancy_report(report_name: str) -> None:
 				str(doc.subject_cr_id or ""),
 				str(doc.subject_name or ""),
 				normalized,
-				model=str(settings.llm_model or ""),
+				duration_ms=duration_ms(),
+				data_sources=",".join(sources),
+				report_ref=report_name,
 			)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), f"report pdf render {report_name}")

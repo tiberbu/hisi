@@ -174,12 +174,13 @@ class TestParse(IntegrationTestCase):
 		self.assertEqual(missing["executive_summary"], "")
 
 	def test_render_report_markdown_clean(self):
-		md = render_report_markdown("CR1", "Jane Doe", {"summary": "all good", "overall": "clean", "findings": []}, model="qwen3-27b")
+		md = render_report_markdown("CR1", "Jane Doe", {"summary": "all good", "overall": "clean", "findings": []})
 		self.assertIn("# Discrepancy Report — CR1", md)
 		self.assertIn("Member: Jane Doe", md)
 		self.assertIn("Overall: **clean** · Findings: 0", md)
 		self.assertIn("No discrepancies found", md)
-		self.assertIn("Model: qwen3-27b", md)
+		# The report carries no model name (implementation detail, not copy).
+		self.assertNotIn("Model", md)
 
 	def test_render_report_markdown_with_findings(self):
 		md = render_report_markdown(
@@ -213,7 +214,7 @@ class TestParse(IntegrationTestCase):
 			],
 		}
 		html_text = report_pdf.render_report_html(
-			"CR1", "Jane & Co", result, model="qwen3-27b", generated_at="2026-01-01 00:00:00"
+			"CR1", "Jane & Co", result, generated_at="2026-01-01 00:00:00"
 		)
 		self.assertIn("Executive Summary", html_text)
 		self.assertIn("The audit reviewed &lt;b&gt;claims&lt;/b&gt; &amp; preauths.", html_text)
@@ -222,7 +223,15 @@ class TestParse(IntegrationTestCase):
 		self.assertIn("Dup &lt;script&gt;alert(1)&lt;/script&gt;", html_text)
 		self.assertNotIn("<script>alert(1)</script>", html_text)
 		self.assertIn("2026-01-01 00:00:00", html_text)
-		self.assertIn("qwen3-27b", html_text)
+		# No model name on the rendered page (implementation detail, not
+		# copy) — and the masthead carries the report brand from hisi.brand
+		# (Clinical Validation Portal), not the old "CLAIM ↔ SHR AUDIT" wording.
+		self.assertNotIn("qwen3-27b", html_text)
+		self.assertIn("CLINICAL VALIDATION PORTAL", html_text)
+		self.assertNotIn("CLAIM ↔ SHR AUDIT", html_text)
+		# Rebrand: the rendered page carries no "HISI" wording (the brand
+		# mark is the bundled logo image in the header).
+		self.assertNotIn("HISI", html_text)
 
 	def test_render_report_html_executive_falls_back_to_summary(self):
 		result = {"summary": "Only summary.", "executive_summary": "", "overall": "clean", "findings": []}
@@ -575,6 +584,10 @@ class TestReportPdfApi(IntegrationTestCase):
 			ai_api.get_discrepancy_report_pdf(name=doc.name)
 		resp = frappe.local.response
 		self.assertEqual(resp["http_status_code"], 200)
+		# The stored File row keeps this fork's uppercase-extension
+		# file_type; the feed must still hand back a real mime so the
+		# preview blob renders as a PDF, not raw bytes.
+		self.assertEqual(resp["data"]["mime_type"], "application/pdf")
 		self.assertTrue(base64.b64decode(resp["data"]["content_b64"]).startswith(b"%PDF"))
 		# the rendered file is attached for subsequent reads
 		files = frappe.get_all(
