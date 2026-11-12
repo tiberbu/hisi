@@ -268,7 +268,9 @@ def _render_and_attach_pdf(doc) -> dict | None:
 			str(doc.subject_cr_id or ""),
 			str(doc.subject_name or ""),
 			findings,
-			model=str(doc.model or ""),
+			duration_ms=doc.duration_ms,
+			data_sources=doc.data_sources,
+			report_ref=doc.name,
 		)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"lazy report pdf render {doc.name}")
@@ -305,10 +307,15 @@ def get_discrepancy_report_pdf(name: str) -> None:
 	file_doc = frappe.get_doc("File", attached["name"])
 	content = file_doc.get_content()
 	raw = content if isinstance(content, bytes) else str(content).encode("utf-8")
+	# This fork's File.file_type stores the uppercase extension ("PDF"), not
+	# a mime type — normalize it, or the preview blob renders as raw bytes.
+	mime = str(attached["file_type"] or "").strip()
+	if mime.upper() == "PDF":
+		mime = "application/pdf"
 	return APIResponse.success(
 		data={
 			"file_name": attached["file_name"],
-			"mime_type": attached["file_type"] or "application/pdf",
+			"mime_type": mime or "application/pdf",
 			"file_size": attached["file_size"],
 			"content_b64": base64.b64encode(raw).decode("ascii"),
 		}

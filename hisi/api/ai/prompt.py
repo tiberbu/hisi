@@ -262,7 +262,6 @@ def render_report_markdown(
 	subject_name: str,
 	result: dict,
 	tags_by_code: dict | None = None,
-	model: str | None = None,
 ) -> str:
 	"""Render the normalized result as the stored markdown report."""
 	lines = ["# Discrepancy Report — " + (str(cr_id or "unknown member"))]
@@ -289,8 +288,6 @@ def render_report_markdown(
 	else:
 		lines += ["No discrepancies found in the analyzed data.", ""]
 	lines.append(f"Generated {now()}")
-	if model:
-		lines.append(f"Model: {model}")
 	return "\n".join(lines).rstrip() + "\n"
 
 

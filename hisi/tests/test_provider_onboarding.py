@@ -138,7 +138,7 @@ class TestProviderOnboarding(SurveillanceTestCase):
 		# Subject/body come from the "HISI Officer Invite" Email Template record.
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [email])
-		self.assertEqual(kw.get("subject"), "Your HISI invitation")
+		self.assertEqual(kw.get("subject"), "Your Visit invitation")
 		self.assertIn(invite[0]["code"], kw.get("message", ""))
 		self.assertIn("/verify-code", kw.get("message", ""))
 		events = self.new_events(before)

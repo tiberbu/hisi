@@ -142,7 +142,7 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 		# Subject/body come from the "HISI Officer Invite" Email Template record.
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [email])
-		self.assertEqual(kw.get("subject"), "Your HISI invitation")
+		self.assertEqual(kw.get("subject"), "Your Visit invitation")
 		self.assertIn(code, kw.get("message", ""))
 		self.assertIn("/verify-code", kw.get("message", ""))
 		self.assertNotIn(code, json.dumps(frappe.local.response))
@@ -168,7 +168,7 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 		self.assertEqual(invite[0]["account_created"], 0)
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [self.officer])
-		self.assertEqual(kw.get("subject"), "Your HISI invitation")
+		self.assertEqual(kw.get("subject"), "Your Visit invitation")
 		self.assertIn(invite[0]["code"], kw.get("message", ""))
 		# The existing password is untouched.
 		self.assertEqual(check_password(self.officer, "Existing-Pass-123"), self.officer)
