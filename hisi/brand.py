@@ -10,7 +10,7 @@ injected by :func:`hisi.utils.render_email_template`.
 """
 
 #: Product name shown to users (the lockup logo carries the visual mark).
-BRAND_NAME = "Visit"
+BRAND_NAME = "Clinical Validation Portal"
 
 #: Company name (footer line, sign-off).
 COMPANY_NAME = "Tiberbu"

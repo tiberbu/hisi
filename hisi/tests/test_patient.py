@@ -428,7 +428,7 @@ class TestPatientFlow(IntegrationTestCase):
     def test_claims_step_uses_med_claim_search_with_jwt(self):
         with patch.object(patient.requests, "get", return_value=http_response(claim_payload())) as mock_get:
             self.run_flow(["claims"], {"cr_id": "CR1"})
-        call = mock_get.call_args
+        call = mock_get.call_args_list[0]
         # The claims step follows the active origin — UAT under simulation
         # mode here — with the JWT bearer, on the configured med claim path.
         self.assertEqual(call.args[0], "https://uat.dha.go.ke/v1/med/resource/Claim Record")
@@ -438,6 +438,151 @@ class TestPatientFlow(IntegrationTestCase):
         records = frappe.local.response.get("data")["results"]["claims"]["records"]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["claim_status"], "Paid")
+
+    def test_claims_records_carry_activity_from_version_history(self):
+        claim = claim_payload()["data"][0]
+        versions = http_response(
+            {
+                "data": [
+                    {
+                        "docname": claim["name"],
+                        "creation": "2026-10-29 08:00:00",
+                        "data": json.dumps({"added": [], "changed": [["claim_status", "received", "manual_review"]], "removed": []}),
+                    },
+                    {
+                        "docname": claim["name"],
+                        "creation": "2026-11-02 10:33:14",
+                        "data": json.dumps({"added": [], "changed": [["claim_status", "manual_review", "approved"]], "removed": []}),
+                    },
+                ]
+            }
+        )
+        with patch.object(patient.requests, "get", side_effect=[http_response(claim_payload()), versions]) as mock_get:
+            self.run_flow(["claims"], {"cr_id": "CR1"})
+        version_call = mock_get.call_args_list[1]
+        # One batched Version request on the claim lane's Version route,
+        # keyed by every claim name via the registry's `in` filter.
+        self.assertEqual(version_call.args[0], "https://uat.dha.go.ke/v1/med/resource/Version")
+        self.assertEqual(
+            json.loads(version_call.kwargs["params"]["filters"]),
+            [["ref_doctype", "=", "Claim Record"], ["docname", "in", [claim["name"]]]],
+        )
+        self.assertEqual(version_call.kwargs["params"]["order_by"], "creation asc")
+        record = frappe.local.response.get("data")["results"]["claims"]["records"][0]
+        self.assertEqual(len(record["activity"]), 2)
+        self.assertEqual(record["activity"][0]["at"], "2026-10-29 08:00:00")
+        self.assertEqual(record["activity"][0]["changes"][0], {"field": "claim_status", "from": "received", "to": "manual_review"})
+        self.assertEqual(record["activity"][1]["changes"][0]["to"], "approved")
+
+    def test_claims_activity_fetch_failure_degrades_to_creation_only(self):
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[http_response(claim_payload()), http_response(None, status_code=400)],
+        ):
+            self.run_flow(["claims"], {"cr_id": "CR1"})
+        response = frappe.local.response
+        self.assertEqual(response.get("status"), "success")
+        self.assertEqual(response.get("data")["errors"], {})
+        record = response.get("data")["results"]["claims"]["records"][0]
+        # The Version lookup 400s (not retried) — the step still succeeds
+        # and the record keeps an empty activity (the UI shows the sent
+        # point alone).
+        self.assertEqual(record["activity"], [])
+
+    def test_preauth_records_carry_activity_keyed_by_bundle_id(self):
+        payload = claim_payload()
+        payload["data"][0]["bundle_id"] = "bundle-1"
+        versions = http_response(
+            {
+                "data": [
+                    {
+                        "docname": "bundle-1",
+                        "creation": "2026-11-10 11:23:31",
+                        "data": json.dumps(
+                            {
+                                "added": [],
+                                "changed": [
+                                    ["practitioner_approval_status", "Pending Consultant Review", "Approved by Consultant"],
+                                    ["comment", None, "Approved"],
+                                ],
+                                "removed": [],
+                            }
+                        ),
+                    }
+                ]
+            }
+        )
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[http_response(payload), http_response({"data": []}), versions],
+        ) as mock_get:
+            self.run_flow(["preauth"], {"cr_id": "CR1"})
+        version_call = mock_get.call_args_list[2]
+        self.assertEqual(version_call.args[0], "https://uat.dha.go.ke/v1/preauth/resource/Version")
+        self.assertEqual(
+            json.loads(version_call.kwargs["params"]["filters"]),
+            [["ref_doctype", "=", "Shared Health Record"], ["docname", "in", ["bundle-1"]]],
+        )
+        record = frappe.local.response.get("data")["results"]["preauth"]["records"][0]
+        self.assertEqual(len(record["activity"]), 1)
+        self.assertEqual(
+            record["activity"][0]["changes"][0],
+            {"field": "practitioner_approval_status", "from": "Pending Consultant Review", "to": "Approved by Consultant"},
+        )
+        # A null old value (the comment was added, not changed) parses to
+        # from=None, never an empty-string surprise.
+        self.assertEqual(record["activity"][0]["changes"][1], {"field": "comment", "from": None, "to": "Approved"})
+
+    def test_preauth_linked_procedures_carry_activity(self):
+        payload = claim_payload()
+        procedure = {
+            "name": "9000proc-a1b2",
+            "procedure_fulfil_status": "Active Procedure",
+            "estimated_procedure_start_date": "2026-06-17",
+            "estimated_procedure_end_date": "2026-06-17",
+            "practitioner": "FID-47-105963-0",
+            "practitioner_name": "Dr. Siranjofu",
+        }
+        proc_versions = http_response(
+            {
+                "data": [
+                    {
+                        "docname": procedure["name"],
+                        "creation": "2026-06-17 14:57:23",
+                        "data": json.dumps(
+                            {
+                                "added": [],
+                                "changed": [["procedure_fulfil_status", "Upcoming Procedure", "Active Procedure"]],
+                                "removed": [],
+                            }
+                        ),
+                    }
+                ]
+            }
+        )
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[http_response(payload), http_response({"data": [procedure]}), proc_versions],
+        ) as mock_get:
+            self.run_flow(["preauth"], {"cr_id": "CR1"})
+        version_call = mock_get.call_args_list[2]
+        # One batched Version request keyed by the procedure name (the
+        # registry's Procedure Record doctype on the preauth route).
+        self.assertEqual(version_call.args[0], "https://uat.dha.go.ke/v1/preauth/resource/Version")
+        self.assertEqual(
+            json.loads(version_call.kwargs["params"]["filters"]),
+            [["ref_doctype", "=", "Procedure Record"], ["docname", "in", [procedure["name"]]]],
+        )
+        record = frappe.local.response.get("data")["results"]["preauth"]["records"][0]
+        self.assertEqual(len(record["procedures"]), 1)
+        self.assertEqual(len(record["procedures"][0]["activity"]), 1)
+        self.assertEqual(
+            record["procedures"][0]["activity"][0]["changes"][0],
+            {"field": "procedure_fulfil_status", "from": "Upcoming Procedure", "to": "Active Procedure"},
+        )
 
     def test_preauth_step_uses_med_preauth_search_with_jwt(self):
         with patch.object(patient.requests, "get", side_effect=[http_response(claim_payload()), http_response({"data": []})]) as mock_get:
@@ -465,7 +610,11 @@ class TestPatientFlow(IntegrationTestCase):
                 ]
             }
         )
-        with patch.object(patient.requests, "get", side_effect=[http_response(claim_payload()), procedures]) as mock_get:
+        with patch.object(
+            patient.requests,
+            "get",
+            side_effect=[http_response(claim_payload()), procedures, http_response({"data": []})],
+        ) as mock_get:
             self.run_flow(["preauth"], {"cr_id": "CR1"})
         procedure_call = mock_get.call_args_list[1]
         # The procedure lookup targets the configured preauth procedure path,
@@ -477,6 +626,10 @@ class TestPatientFlow(IntegrationTestCase):
         self.assertEqual(len(record["procedures"]), 1)
         self.assertEqual(record["procedures"][0]["procedure_fulfil_status"], "Scheduled")
         self.assertEqual(record["procedures"][0]["practitioner_name"], "Dr. Aoko")
+        # The third call is the batched procedure Version lookup; with no
+        # versions in the registry the procedure's activity stays empty.
+        self.assertEqual(mock_get.call_args_list[2].args[0], "https://uat.dha.go.ke/v1/preauth/resource/Version")
+        self.assertEqual(record["procedures"][0]["activity"], [])
 
     def test_database_data_source_not_available_yet(self):
         self.set_settings(data_source="Database")
@@ -1278,3 +1431,23 @@ class TestVisitClaimContext(IntegrationTestCase):
         self.assertEqual(claim_map, {"c1": ""})
         self.assertEqual(by_visit, {})
         self.assertEqual(problems, [])
+
+    def test_attach_claim_visit_ids_resolves_the_consent_space_visit(self):
+        records = [
+            {"name": "c1", "bundle_id": "b-ok"},
+            {"name": "c2"},
+        ]
+        with patch.object(patient, "http_get", return_value={"data": [{"name": "b-ok", "fhir_request": json.dumps(self.BUNDLE)}]}):
+            patient._attach_claim_visit_ids(records, "/v1/med/resource/Claim Record")
+        # The claim is tagged with its bundle's Encounter episodeOfCare —
+        # the GUID in the consent visit_id space the visit card shows, so
+        # the records join on the same id.
+        self.assertEqual(records[0]["visit_id"], "v-1")
+        # A claim without a bundle id degrades to "" (the UI falls back to
+        # the time-matched consent anchor).
+        self.assertEqual(records[1]["visit_id"], "")
+
+    def test_attach_claim_visit_ids_no_records_no_fetch(self):
+        with patch.object(patient, "http_get") as mock_get:
+            patient._attach_claim_visit_ids([], "/v1/med/resource/Claim Record")
+        mock_get.assert_not_called()

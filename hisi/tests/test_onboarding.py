@@ -5,6 +5,7 @@ import frappe
 from frappe.auth import CookieManager, LoginManager
 from frappe.utils.password import check_password, update_password
 
+from hisi import brand
 from hisi.api.auth import complete_password_reset
 from hisi.api.surveillance import onboarding
 from hisi.tests.test_surveillance import SurveillanceTestCase
@@ -142,7 +143,7 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 		# Subject/body come from the "HISI Officer Invite" Email Template record.
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [email])
-		self.assertEqual(kw.get("subject"), "Your Visit invitation")
+		self.assertEqual(kw.get("subject"), f"Your {brand.BRAND_NAME} invitation")
 		self.assertIn(code, kw.get("message", ""))
 		self.assertIn("/verify-code", kw.get("message", ""))
 		self.assertNotIn(code, json.dumps(frappe.local.response))
@@ -168,7 +169,7 @@ class TestOfficerOnboarding(SurveillanceTestCase):
 		self.assertEqual(invite[0]["account_created"], 0)
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [self.officer])
-		self.assertEqual(kw.get("subject"), "Your Visit invitation")
+		self.assertEqual(kw.get("subject"), f"Your {brand.BRAND_NAME} invitation")
 		self.assertIn(invite[0]["code"], kw.get("message", ""))
 		# The existing password is untouched.
 		self.assertEqual(check_password(self.officer, "Existing-Pass-123"), self.officer)

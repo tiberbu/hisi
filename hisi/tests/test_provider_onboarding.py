@@ -4,6 +4,7 @@ import frappe
 from frappe.auth import CookieManager, LoginManager
 from frappe.utils.password import check_password, update_password
 
+from hisi import brand
 from hisi.api import provider_onboarding
 from hisi.api.surveillance import onboarding
 from hisi.tests.test_onboarding import _RequestStub
@@ -138,7 +139,7 @@ class TestProviderOnboarding(SurveillanceTestCase):
 		# Subject/body come from the "HISI Officer Invite" Email Template record.
 		kw = self.mail_kwargs()
 		self.assertEqual(kw.get("recipients"), [email])
-		self.assertEqual(kw.get("subject"), "Your Visit invitation")
+		self.assertEqual(kw.get("subject"), f"Your {brand.BRAND_NAME} invitation")
 		self.assertIn(invite[0]["code"], kw.get("message", ""))
 		self.assertIn("/verify-code", kw.get("message", ""))
 		events = self.new_events(before)
