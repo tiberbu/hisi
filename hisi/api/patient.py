@@ -1269,7 +1269,9 @@ def step_consent(cr_id: str) -> dict:
     return {"records": records}
 
 def step_claims(cr_id: str) -> dict:
-    return {"records": med_claim_records(med_claim_search_path(), cr_id)}
+    records = med_claim_records(med_claim_search_path(), cr_id)
+    _attach_claim_activity(records, med_claim_search_path(), "name", "Claim Record")
+    return {"records": records}
 
 MAX_PREAUTH_PROCEDURE_LOOKUPS = 5
 
@@ -1299,6 +1301,8 @@ def step_preauth(cr_id: str) -> dict:
             ]
         except UpstreamError:
             record["procedures"] = []
+    _attach_procedure_activity(records)
+    _attach_claim_activity(records, med_preauth_search_path(), "bundle_id", "Shared Health Record")
     return {"records": records}
 
 def med_claim_records(path: str, cr_id: str) -> list:
@@ -1312,6 +1316,120 @@ def med_claim_records(path: str, cr_id: str) -> list:
         for record in parse_records(http_get(join_url(origin, path), params, bearer=True))
         if isinstance(record, dict)
     ]
+
+VERSION_FIELDS = ["docname", "creation", "data"]
+
+# The Version diffs also carry the payer's echoed FHIR response payload
+# (multi-KB per row) and geo / payer bookkeeping — only the status
+# transition fields and their short human context reach the client.
+ACTIVITY_CHANGE_FIELDS = {
+    "claim_status",
+    "validation_status",
+    "practitioner_approval_status",
+    "procedure_fulfil_status",
+    "comment",
+    "claim_upstream_errors",
+    "end_procedure_reason",
+}
+
+def version_route_for(claim_route: str) -> str:
+    """The registry's Version resource on the claim lane's route (the
+    per-document change history): ``.../resource/Claim Record`` becomes
+    ``.../resource/Version``."""
+    return claim_route.rsplit("/", 1)[0] + "/Version"
+
+def _version_changed(data) -> list:
+    """A Version row's ``data`` is a change-log diff whose ``changed`` is a
+    list of ``[field, old, new]`` triples; anything unparseable is a no-op
+    (the row simply carries no readable changes)."""
+    try:
+        diff = json.loads(data) if isinstance(data, str) else data
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(diff, dict):
+        return []
+    changed = diff.get("changed")
+    if not isinstance(changed, list):
+        return []
+    return [item for item in changed if isinstance(item, list) and item]
+
+def claim_activity_by_doc(claim_route: str, docnames: list, ref_doctype: str) -> dict:
+    """The registry's Version history for a batch of documents in ONE
+    request (the search API accepts an ``in`` filter on ``docname``), as
+    ``{docname: [{at, changes: [{field, from, to}]}]}`` in creation order.
+    A fetch failure yields an empty map: the activity is an enrichment,
+    and its loss degrades to the creation point alone rather than failing
+    the step."""
+    if not docnames:
+        return {}
+    params = {
+        "filters": json.dumps([["ref_doctype", "=", ref_doctype], ["docname", "in", docnames]]),
+        "fields": json.dumps(VERSION_FIELDS),
+        "order_by": "creation asc",
+    }
+    try:
+        payload = http_get(join_url(dha_origin(), version_route_for(claim_route)), params, bearer=True)
+    except UpstreamError:
+        return {}
+    by_doc = {}
+    for row in parse_records(payload):
+        if not isinstance(row, dict):
+            continue
+        docname = str(row.get("docname") or "").strip()
+        if not docname:
+            continue
+        changes = []
+        for item in _version_changed(row.get("data")):
+            field = str(item[0])
+            if field not in ACTIVITY_CHANGE_FIELDS:
+                continue
+            old = item[1] if len(item) > 1 else None
+            new = item[2] if len(item) > 2 else None
+            changes.append({"field": field, "from": _text(old) or None, "to": _text(new) or None})
+        if not changes:
+            # The version touched only bookkeeping fields (the echoed FHIR
+            # response, coordinates, payer references) — nothing to show.
+            continue
+        by_doc.setdefault(docname, []).append({"at": str(row.get("creation") or ""), "changes": changes})
+    return by_doc
+
+def _attach_claim_activity(records: list, claim_route: str, doc_field: str, ref_doctype: str) -> None:
+    """Attach each record's Version history as ``activity`` — the record's
+    real status transitions with their change timestamps. A record the
+    registry has no versions for keeps an empty list, so the UI shows the
+    creation point (sent) alone."""
+    docnames = []
+    for record in records:
+        value = str(record.get(doc_field) or "").strip() if isinstance(record, dict) else ""
+        if value and value not in docnames:
+            docnames.append(value)
+    by_doc = claim_activity_by_doc(claim_route, docnames, ref_doctype)
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        record["activity"] = by_doc.get(str(record.get(doc_field) or "").strip(), [])
+
+def _attach_procedure_activity(records: list) -> None:
+    """Attach each preauth's linked Procedure Records to their own Version
+    history (their real fulfilment transitions, e.g. Upcoming -> Active ->
+    Terminated) — one batched request covers every procedure of every
+    preauth in the step."""
+    docnames = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        for procedure in record.get("procedures") or []:
+            value = str(procedure.get("name") or "").strip() if isinstance(procedure, dict) else ""
+            if value and value not in docnames:
+                docnames.append(value)
+    by_doc = claim_activity_by_doc(med_preauth_search_path(), docnames, "Procedure Record")
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        for procedure in record.get("procedures") or []:
+            if not isinstance(procedure, dict):
+                continue
+            procedure["activity"] = by_doc.get(str(procedure.get("name") or "").strip(), [])
 
 def visit_claim_context(claim_routes: list) -> tuple:
     """The claim<->visit join via the registry Shared Health Record.
