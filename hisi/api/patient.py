@@ -1271,6 +1271,7 @@ def step_consent(cr_id: str) -> dict:
 def step_claims(cr_id: str) -> dict:
     records = med_claim_records(med_claim_search_path(), cr_id)
     _attach_claim_activity(records, med_claim_search_path(), "name", "Claim Record")
+    _attach_claim_visit_ids(records, med_claim_search_path())
     return {"records": records}
 
 MAX_PREAUTH_PROCEDURE_LOOKUPS = 5
@@ -1303,6 +1304,7 @@ def step_preauth(cr_id: str) -> dict:
             record["procedures"] = []
     _attach_procedure_activity(records)
     _attach_claim_activity(records, med_preauth_search_path(), "bundle_id", "Shared Health Record")
+    _attach_claim_visit_ids(records, med_preauth_search_path())
     return {"records": records}
 
 def med_claim_records(path: str, cr_id: str) -> list:
@@ -1487,6 +1489,23 @@ def visit_claim_context(claim_routes: list) -> tuple:
             ]
             by_visit.setdefault(visit_id, resources)
     return claim_map, by_visit, problems
+
+def _attach_claim_visit_ids(records: list, claim_route: str) -> None:
+    """Attach each claim's own visit id — its submitted bundle's
+    ``Encounter.episodeOfCare`` reference, the consent ``visit_id`` space
+    — so the UI tags the claim/preauth with the same id the visit card
+    shows (the records join on it). A claim whose bundle carries no
+    readable encounter gets ``""`` (the UI falls back to the
+    time-matched consent anchor)."""
+    if not records:
+        return
+    claim_map, _, _ = visit_claim_context(
+        [(record, claim_route) for record in records if isinstance(record, dict)]
+    )
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        record["visit_id"] = str(claim_map.get(str(record.get("name") or "").strip(), "") or "")
 
 def _fetch_shr_bundle(bundle_id: str, claim_route: str):
     """One Shared Health Record by id (the claim's ``bundle_id``) from the

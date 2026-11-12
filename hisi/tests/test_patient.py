@@ -1431,3 +1431,23 @@ class TestVisitClaimContext(IntegrationTestCase):
         self.assertEqual(claim_map, {"c1": ""})
         self.assertEqual(by_visit, {})
         self.assertEqual(problems, [])
+
+    def test_attach_claim_visit_ids_resolves_the_consent_space_visit(self):
+        records = [
+            {"name": "c1", "bundle_id": "b-ok"},
+            {"name": "c2"},
+        ]
+        with patch.object(patient, "http_get", return_value={"data": [{"name": "b-ok", "fhir_request": json.dumps(self.BUNDLE)}]}):
+            patient._attach_claim_visit_ids(records, "/v1/med/resource/Claim Record")
+        # The claim is tagged with its bundle's Encounter episodeOfCare —
+        # the GUID in the consent visit_id space the visit card shows, so
+        # the records join on the same id.
+        self.assertEqual(records[0]["visit_id"], "v-1")
+        # A claim without a bundle id degrades to "" (the UI falls back to
+        # the time-matched consent anchor).
+        self.assertEqual(records[1]["visit_id"], "")
+
+    def test_attach_claim_visit_ids_no_records_no_fetch(self):
+        with patch.object(patient, "http_get") as mock_get:
+            patient._attach_claim_visit_ids([], "/v1/med/resource/Claim Record")
+        mock_get.assert_not_called()
