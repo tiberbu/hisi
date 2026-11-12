@@ -344,8 +344,11 @@ def _attach_visit_links(results: dict, errors: dict) -> None:
 	``visit_id`` space). The submitted bundles become the SHR side of the
 	per-visit comparison and land in ``results["visits"]`` alongside the
 	consented visits. Claim-driven: it runs whenever any claim/preauth
-	record is present, even if the consent step failed. Fail-soft: a join
-	failure is recorded in errors and never sinks the run."""
+	record is present, even if the consent step failed. A claim whose
+	visit cannot be resolved (a bundle with no readable encounter) is
+	still compared — grouped under a synthetic ``unknown-visitId-<date>``
+	bucket joined with the claim's creation date, never dropped. Fail-soft:
+	a join failure is recorded in errors and never sinks the run."""
 	try:
 		routes = {"claims": med_claim_search_path(), "preauth": med_preauth_search_path()}
 	except (BadRequest, NotFound, UpstreamError) as exc:
@@ -404,7 +407,9 @@ def _attach_visit_links(results: dict, errors: dict) -> None:
 		for record in data.get("records") or []:
 			if not isinstance(record, dict):
 				continue
-			visit_id = str(record.get("visit_id") or "").strip()
+			# A claim whose bundle carries no readable encounter is still
+			# compared — grouped under its creation date, not dropped.
+			visit_id = str(record.get("visit_id") or "").strip() or _unknown_visit_key(record)
 			if not visit_id:
 				continue
 			entry = {"kind": "preauth" if step == "preauth" else "claim"}
@@ -433,6 +438,18 @@ def _attach_visit_links(results: dict, errors: dict) -> None:
 			)
 		)
 	results["visits"] = visits
+
+
+def _unknown_visit_key(record: dict) -> str:
+	"""A synthetic visit bucket for a claim whose visit cannot be resolved
+	(no readable encounter in the claim's bundle): ``unknown-visitId-<date>``,
+	joined with the claim's creation date (e.g. ``unknown-visitId-2026-12-11``).
+	Empty when the record has no creation date to key on."""
+	creation = str(record.get("creation") or "").strip()
+	date_part = creation[:10]
+	if len(date_part) == 10 and date_part[4] == "-" and date_part[7] == "-":
+		return "unknown-visitId-{}".format(date_part)
+	return ""
 
 
 def _visit_entry(visit_id, *, consented, shr_resources, linked_claims, facility_id=None, consent_status=None, consent_creation=None) -> dict:

@@ -364,6 +364,52 @@ class TestAttachVisitLinks(IntegrationTestCase):
 		self.assertNotIn("visits", results)
 		self.assertEqual(errors, {})
 
+	def test_unresolvable_claims_group_under_unknown_visit(self):
+		results = {
+			"claims": {
+				"records": [
+					{"name": "C1", "bundle_id": "B1", "creation": "2026-12-11 09:15:00"},
+					{"name": "C2", "bundle_id": "B2", "creation": "2026-12-11 17:40:00"},
+					{"name": "C3", "bundle_id": "B3", "creation": "2026-12-12 08:00:00"},
+					{"name": "C4", "bundle_id": "B4"},  # no creation: no key possible
+				]
+			},
+			"consent": {"records": [{"visit_id": "V1", "facility_id": "F1", "consent_status": "Approved", "creation": "2026-12-10"}]},
+		}
+		errors = {}
+		# C1/C2 resolve to no visit; C3 links to the consented visit; C4 has
+		# no creation date to key on.
+		join = patch.object(
+			worker,
+			"visit_claim_context",
+			return_value=({"C1": "", "C2": "", "C3": "V1"}, {"V1": []}, []),
+		)
+		r1, r2 = _route_patches()
+		with join, r1, r2:
+			worker._attach_visit_links(results, errors)
+		self.assertEqual(errors, {})
+		# the visit_id field stays real: only the resolvable claim gains one
+		self.assertNotIn("visit_id", results["claims"]["records"][0])
+		self.assertNotIn("visit_id", results["claims"]["records"][1])
+		self.assertEqual(results["claims"]["records"][2]["visit_id"], "V1")
+		visits = {visit["visit_id"]: visit for visit in results["visits"]}
+		self.assertIn("V1", visits)
+		self.assertTrue(visits["V1"]["consented"])
+		self.assertEqual([claim["name"] for claim in visits["V1"]["linked_claims"]], ["C3"])
+		unknown = visits.get("unknown-visitId-2026-12-11")
+		self.assertIsNotNone(unknown, "unresolvable claims form a creation-date bucket")
+		self.assertFalse(unknown["consented"])
+		self.assertEqual([claim["name"] for claim in unknown["linked_claims"]], ["C1", "C2"])
+		self.assertNotIn("unknown-visitId-2026-12-12", visits)  # C3 resolved to V1
+		self.assertEqual(len(visits), 2)  # C4 (no creation) stays out
+
+	def test_unknown_visit_key_uses_creation_date(self):
+		self.assertEqual(worker._unknown_visit_key({"creation": "2026-12-11 17:40:00"}), "unknown-visitId-2026-12-11")
+		self.assertEqual(worker._unknown_visit_key({"creation": "2026-12-11"}), "unknown-visitId-2026-12-11")
+		self.assertEqual(worker._unknown_visit_key({"creation": ""}), "")
+		self.assertEqual(worker._unknown_visit_key({}), "")
+		self.assertEqual(worker._unknown_visit_key({"creation": "garbage"}), "")
+
 
 class TestSettings(IntegrationTestCase):
 	def tearDown(self):
