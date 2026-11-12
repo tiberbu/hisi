@@ -239,8 +239,8 @@ def render_report_html(
 		'<td style="vertical-align:bottom;padding-right:16px;">'
 		'<div style="font-size:26pt;font-weight:bold;letter-spacing:-.01em;color:#172a22;line-height:1.15;">'
 		"Discrepancy Report</div>"
-		'<div style="font-size:9pt;color:#47574f;margin-top:5px;">Claim vs. Shared Health Record audit · '
-		"visit-level analysis</div>"
+		'<div style="font-size:9pt;color:#47574f;margin-top:5px;">Claim vs. Shared Health Record '
+		"(Visit Level Analysis)</div>"
 		"</td>"
 		'<td style="vertical-align:bottom;text-align:right;">'
 		f'<span style="display:inline-block;border-radius:8px;background:{bg};padding:12px 18px;text-align:right;">'
