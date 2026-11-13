@@ -435,57 +435,12 @@ def _parse_period(value) -> date | None:
 	return None
 
 
-def eval_contribution_gap(ctx: RuleContext, params: dict) -> list:
-	"""A gap in the contribution ledger longer than ``max_gap_months``
-	(default 3). Gaps between consecutive parseable periods, plus the tail
-	from the last payment to the run date, when longer than the threshold.
-	Skipped when fewer than two periods are parseable (a short ledger is
-	not evidence of a gap)."""
-	max_gap_months = int(params.get("max_gap_months", 3))
-	threshold_days = max_gap_months * 31
-	ledger = (ctx.contributions or {}).get("contributions") or []
-	dated = []
-	for entry in ledger:
-		if not isinstance(entry, dict):
-			continue
-		day = _parse_period(entry.get("period"))
-		if day is None:
-			continue
-		dated.append((day, entry))
-	if len(dated) < 2:
-		return []
-	dated.sort(key=lambda item: item[0])
-	today = datetime.now(timezone.utc).date()
-	findings = []
-	for (day_a, entry_a), (day_b, entry_b) in zip(dated, dated[1:]):
-		gap_days = (day_b - day_a).days
-		if gap_days > threshold_days:
-			ref_a = _ref("contributions", entry_a.get("payment_reference"), "period", entry_a.get("period"))
-			ref_b = _ref("contributions", entry_b.get("payment_reference"), "period", entry_b.get("period"))
-			detail = (
-				f"Contribution ledger gap of {gap_days} days ({gap_days // 30} months) between payment "
-				f"{entry_a.get('payment_reference') or 'the prior payment'} ({entry_a.get('period')}) and "
-				f"payment {entry_b.get('payment_reference') or 'the later payment'} ({entry_b.get('period')}) — "
-				f"beyond the {max_gap_months}-month tolerance."
-			)
-			findings.append(_finding("CONTRIBUTION_GAP", "medium", "Gap in the contribution ledger", detail, [ref_a, ref_b]))
-	last_day, last_entry = dated[-1]
-	if (today - last_day).days > threshold_days and last_day <= today:
-		ref = _ref("contributions", last_entry.get("payment_reference"), "period", last_entry.get("period"))
-		detail = (
-			f"The last recorded contribution ({last_entry.get('payment_reference') or 'the final ledger entry'}, "
-			f"period {last_entry.get('period')}) is {(today - last_day).days} days old — beyond the "
-			f"{max_gap_months}-month tolerance with no newer payment on the ledger."
-		)
-		findings.append(_finding("CONTRIBUTION_GAP", "medium", "No recent contribution on the ledger", detail, [ref]))
-	return _cap(findings, params)
-
-
 def eval_timing_anomaly(ctx: RuleContext, params: dict) -> list:
 	"""Dates out of logical order: a service dated after the claim's
-	submission, a service dated in the future, a preauthorization created
-	after a claim for the same code, or a contribution posted for a future
-	period."""
+	submission, a service dated in the future, or a preauthorization created
+	after a claim for the same code. Contribution timing is NOT checked here —
+	the contribution ledger is context only (contribution decisions belong to
+	the payer), surfaced in the report's contribution section instead."""
 	today = datetime.now(timezone.utc).date() + timedelta(days=1)
 	findings = []
 	for claim in ctx.claims:
@@ -525,17 +480,6 @@ def eval_timing_anomaly(ctx: RuleContext, params: dict) -> list:
 				refs.append(_ref("claims", claim.get("name"), "creation", claim.get("creation")))
 				findings.append(_finding("TIMING_ANOMALY", "low", "Preauthorization postdates the claim", detail, refs))
 				break
-	for entry in (ctx.contributions or {}).get("contributions") or []:
-		if not isinstance(entry, dict):
-			continue
-		day = _parse_period(entry.get("period"))
-		if day and day > today:
-			ref = _ref("contributions", entry.get("payment_reference"), "period", entry.get("period"))
-			detail = (
-				f"Contribution {entry.get('payment_reference') or 'on the ledger'} is posted for period "
-				f"{entry.get('period')} — a future period."
-			)
-			findings.append(_finding("TIMING_ANOMALY", "low", "Contribution posted for a future period", detail, [ref]))
 	return _cap(findings, params)
 
 

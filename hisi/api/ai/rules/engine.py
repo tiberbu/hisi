@@ -45,7 +45,6 @@ EVALUATORS = {
 	"amount_mismatch": ev.eval_amount_mismatch,
 	"missing_preauth": ev.eval_missing_preauth,
 	"duplicate_claim": ev.eval_duplicate_claim,
-	"contribution_gap": ev.eval_contribution_gap,
 	"timing_anomaly": ev.eval_timing_anomaly,
 	"eligibility_mismatch": ev.eval_eligibility_mismatch,
 	"tri_diagnosis": ev.eval_tri_diagnosis,
@@ -134,7 +133,10 @@ def deterministic_summary(findings: list, ctx: RuleContext, sources: list) -> di
 		severity = finding.get("severity")
 		counts[severity if severity in counts else "medium"] += 1
 	period = _period_label(ctx.claims)
-	source_label = ", ".join(sources) if sources else "the configured sources"
+	# Contributions are context only (the payer makes contribution decisions):
+	# they are never listed among the sources the analysis audited.
+	analyzed = [s for s in sources if s != "contributions"]
+	source_label = ", ".join(analyzed) if analyzed else "the configured sources"
 	if not findings:
 		summary = f"No discrepancies identified across {source_label} for this member."
 		executive = (

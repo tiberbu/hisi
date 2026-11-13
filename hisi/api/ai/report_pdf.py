@@ -174,6 +174,111 @@ def _finding_block(idx: int, f: dict) -> str:
 	)
 
 
+def _money(value) -> str:
+	"""Compact currency text for report tables (missing/zero -> em dash)."""
+	try:
+		amount = float(value)
+	except (TypeError, ValueError):
+		return "&mdash;"
+	if not amount:
+		return "&mdash;"
+	return f"{amount:,.2f}".rstrip("0").rstrip(".") if amount % 1 else f"{amount:,.0f}"
+
+
+def _coverage_html(coverage: dict | None) -> str:
+	"""The Coverage section: one row per configured lane with its status
+	(available / empty / errored) and record count, so a clean verdict always
+	states what it was based on. Empty when nothing was passed (legacy calls)."""
+	lanes = (coverage or {}).get("lanes") or []
+	if not lanes:
+		return ""
+	rows = []
+	for lane in lanes:
+		label = str(lane.get("label") or lane.get("key") or "")
+		status = str(lane.get("status") or "unknown")
+		if status == "available":
+			status_cell = '<span style="color:#15803d;font-weight:700;">Available</span>'
+			count_cell = str(lane.get("count") or 0)
+		elif status == "empty":
+			status_cell = '<span style="color:#b45309;font-weight:700;">Empty</span>'
+			count_cell = "0"
+		elif status == "error":
+			status_cell = '<span style="color:#991b1b;font-weight:700;">Errored</span>'
+			detail = str(lane.get("detail") or "").strip()
+			count_cell = "&mdash;" + (
+				f'<div style="font-size:11px;color:#991b1b;font-weight:400;margin-top:2px;">{_esc(detail)}</div>'
+				if detail
+				else ""
+			)
+		else:
+			status_cell = '<span style="color:#6b7280;">Not tracked</span>'
+			count_cell = "&mdash;"
+		rows.append(
+			"<tr>"
+			f'<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#374151;">{_esc(label)}</td>'
+			f'<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;font-size:12px;">{status_cell}</td>'
+			f'<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;color:#374151;">{count_cell}</td>'
+			"</tr>"
+		)
+	scope = str((coverage or {}).get("scope") or "").strip()
+	scope_line = (
+		f'<div style="font-size:11px;color:#6b7280;margin-bottom:6px;">Scope: {_esc(scope)}</div>' if scope else ""
+	)
+	caveats = [l for l in lanes if l.get("status") in ("empty", "error")]
+	caveat_line = (
+		'<div style="font-size:11px;color:#6b7280;margin-top:6px;">Lanes marked Empty or Errored were not part of the evidence; '
+		"findings depend only on the available lanes.</div>"
+		if caveats
+		else ""
+	)
+	return (
+		'<div style="padding:20px 28px 0 28px;">'
+		'<div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;margin-bottom:10px;">'
+		"Coverage \u2014 what this review evaluated</div>"
+		+ scope_line
+		+ '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">'
+		'<tr style="background:#f9fafb;"><td style="padding:6px 10px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #e5e7eb;">Data lane</td>'
+		'<td style="padding:6px 10px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #e5e7eb;">Status</td>'
+		'<td style="padding:6px 10px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #e5e7eb;text-align:right;">Records</td></tr>'
+		+ "".join(rows)
+		+ "</table>"
+		+ caveat_line
+		+ "</div>"
+	)
+
+
+def _contribution_html(ledger: list | None) -> str:
+	"""The grouped Contribution ledger section — context only. Contributions
+	are shown in one place (never scattered) and never drive findings: the
+	payer makes contribution decisions."""
+	if not ledger:
+		return ""
+	rows = []
+	for entry in ledger:
+		period = str(entry.get("period") or "").strip()
+		ref = str(entry.get("payment_reference") or entry.get("invoice_number") or "").strip()
+		rows.append(
+			"<tr>"
+			f'<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#374151;">{_esc(period) or "&mdash;"}</td>'
+			f'<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;color:#374151;">{_money(entry.get("amount"))}</td>'
+			f'<td style="padding:6px 10px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#374151;">{_esc(ref) or "&mdash;"}</td>'
+			"</tr>"
+		)
+	return (
+		'<div style="padding:20px 28px 0 28px;">'
+		'<div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;margin-bottom:6px;">'
+		"Contribution ledger</div>"
+		'<div style="font-size:11px;color:#6b7280;margin-bottom:8px;">Context only \u2014 contribution decisions are made by the payer and are not part of this analysis.</div>'
+		'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">'
+		'<tr style="background:#f9fafb;"><td style="padding:6px 10px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #e5e7eb;">Period</td>'
+		'<td style="padding:6px 10px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #e5e7eb;text-align:right;">Amount</td>'
+		'<td style="padding:6px 10px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;border-bottom:1px solid #e5e7eb;">Reference</td></tr>'
+		+ "".join(rows)
+		+ "</table>"
+		+ "</div>"
+	)
+
+
 def render_report_html(
 	cr_id: str,
 	subject_name: str,
@@ -187,6 +292,8 @@ def render_report_html(
 	subject_preauth: str | None = None,
 	claim_status: str | None = None,
 	claim_status_label: str | None = None,
+	coverage: dict | None = None,
+	contribution_ledger: list | None = None,
 ) -> str:
 	"""The full report page. ``result`` is the normalized payload
 	(``summary`` / ``executive_summary`` / ``overall`` / ``findings``);
@@ -196,7 +303,12 @@ def render_report_html(
 	``subject_claim`` + ``claim_status`` (both optional) mark the report as a
 	claim-scoped payment-decision report and surface the claim's dispatch
 	state in the context block (a claim that was not sent to the payer is
-	flagged, so the findings below it are read in the right context)."""
+	flagged, so the findings below it are read in the right context).
+
+	``coverage`` (optional, per-lane status + counts from the rule context)
+	renders the Coverage section; ``contribution_ledger`` (optional, sorted
+	ledger entries) renders the grouped Contribution ledger section — context
+	only, never a finding source."""
 	result = result or {}
 	findings = sorted(
 		(f for f in (result.get("findings") or []) if isinstance(f, dict)),
@@ -433,8 +545,10 @@ def render_report_html(
 		+ "</table></div>"
 		+ stats_row
 		+ low_line
+		+ _coverage_html(coverage)
 		+ summary_html
 		+ findings_html
+		+ _contribution_html(contribution_ledger)
 		+ footer
 		+ "</body></html>"
 	)
@@ -453,6 +567,8 @@ def build_report_pdf_bytes(
 	subject_preauth: str | None = None,
 	claim_status: str | None = None,
 	claim_status_label: str | None = None,
+	coverage: dict | None = None,
+	contribution_ledger: list | None = None,
 ) -> bytes:
 	"""Render the report to PDF bytes (the job's deliverable)."""
 	html = render_report_html(
@@ -468,6 +584,8 @@ def build_report_pdf_bytes(
 		subject_preauth=subject_preauth,
 		claim_status=claim_status,
 		claim_status_label=claim_status_label,
+		coverage=coverage,
+		contribution_ledger=contribution_ledger,
 	)
 	return pdfkit.from_string(html, False)
 

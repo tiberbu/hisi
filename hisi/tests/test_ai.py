@@ -15,6 +15,7 @@ from hisi.api.ai import report_pdf
 from hisi.api.ai import worker
 from hisi.api.ai.prompt import (
 	OUTPUT_CONTRACT,
+	_trim_step,
 	build_data_context,
 	build_report_prompt,
 	extract_json_object,
@@ -258,9 +259,16 @@ class TestDataContext(IntegrationTestCase):
 		}
 		context = build_data_context("C", ["claims", "contributions", "records"], results, {"consent": "boom"}, 5)
 		self.assertEqual(len(context["data"]["claims"]["records"]), 5)
-		self.assertEqual(len(context["data"]["contributions"]["contributions"]), 5)
-		# by_visit merged in deterministic (sorted visit) order
-		self.assertEqual(context["data"]["records"]["records"], [{"i": 3}, {"i": 1}, {"i": 2}])
+		# contributions are context only (the payer makes contribution
+		# decisions): the ledger is grouped in the report, never digested for
+		# the model to comment on
+		self.assertNotIn("contributions", context["data"])
+		# the raw records lane is excluded from the data section (the visits
+		# join carries the briefed SHR); the deterministic by_visit merge is
+		# still exercised on _trim_step itself
+		self.assertNotIn("records", context["data"])
+		merged = _trim_step(results["records"], 5)
+		self.assertEqual(merged["records"], [{"i": 3}, {"i": 1}, {"i": 2}])
 		self.assertEqual(context["errors"], {"consent": "boom"})
 		self.assertEqual(context["sources"], ["claims", "contributions", "records"])
 

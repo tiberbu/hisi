@@ -241,6 +241,80 @@ class RuleContext:
 		ctx.registry = _load_registry(ctx.all_intervention_codes())
 		return ctx
 
+	#: Report labels for the configured data lanes.
+	_LANE_LABELS = {
+		"patient": "Patient identity",
+		"eligibility": "Eligibility",
+		"consent": "Consent",
+		"contributions": "Contribution ledger",
+		"claims": "Claims",
+		"preauth": "Preauthorization",
+		"records": "Shared health record",
+	}
+
+	def coverage(self, scope_label: str = "") -> dict:
+		"""Per-lane coverage of this context: what the analysis could actually
+		see, per configured source — available / empty / errored, with the
+		record count for available lanes. Counts reflect the context as the
+		engine saw it (scoped runs show the scoped counts; the scope label
+		carries that explanation)."""
+
+		def _count(key: str):
+			if key == "patient":
+				return 1 if self.member else 0
+			if key == "eligibility":
+				return 1 if self.eligibility else 0
+			if key == "consent":
+				return len(self.consents)
+			if key == "contributions":
+				return len((self.contributions or {}).get("contributions") or [])
+			if key == "claims":
+				return len(self.claims)
+			if key == "preauth":
+				return len(self.preauths)
+			if key == "records":
+				return sum(len(res) for res in self.shr_by_visit.values())
+			return None
+
+		lanes = []
+		for key in self.sources:
+			label = self._LANE_LABELS.get(key, str(key))
+			error = self.errors.get(key)
+			if error is not None and str(error).strip():
+				# The raw message is surfaced in the report — keep it short and
+				# neutral (no internal doctype/config names in the deliverable).
+				detail = str(error).replace("HISI Settings", "site settings").replace("HISI", "site")[:160]
+				lanes.append({"key": key, "label": label, "status": "error", "count": None, "detail": detail})
+				continue
+			count = _count(key)
+			if count is None:
+				lanes.append({"key": key, "label": label, "status": "unknown", "count": None, "detail": ""})
+			elif count > 0:
+				lanes.append({"key": key, "label": label, "status": "available", "count": count, "detail": ""})
+			else:
+				lanes.append({"key": key, "label": label, "status": "empty", "count": 0, "detail": ""})
+		return {"scope": str(scope_label or ""), "lanes": lanes}
+
+	def contribution_ledger(self) -> list:
+		"""The contribution ledger, grouped and sorted for the report — context
+		only (contribution decisions belong to the payer), never a source of
+		findings."""
+		entries = (self.contributions or {}).get("contributions") or []
+		out = []
+		for entry in entries:
+			if not isinstance(entry, dict):
+				continue
+			out.append(
+				{
+					"period": str(entry.get("period") or "").strip(),
+					"amount": entry.get("amount"),
+					"payment_reference": str(entry.get("payment_reference") or "").strip(),
+					"invoice_number": str(entry.get("invoice_number") or "").strip(),
+				}
+			)
+		out.sort(key=lambda row: (row["period"], row["payment_reference"]))
+		return out
+
 	def scope_to_claim(self, claim_ref: str) -> tuple["RuleContext", dict | None]:
 		"""Narrow this context to a single claim (a payment-decision report).
 

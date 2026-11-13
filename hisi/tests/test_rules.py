@@ -191,32 +191,58 @@ class TestDuplicateClaim(unittest.TestCase):
 		self.assertEqual(out, [])
 
 
-class TestContributionGap(unittest.TestCase):
-	def test_gap_detected(self):
-		contributions = {
-			"cr_id": "CR-1",
-			"contributions": [
-				{"payment_reference": "P1", "period": "2026-01"},
-				{"payment_reference": "P2", "period": "2026-09"},
-			],
-		}
-		out = ev.eval_contribution_gap(_ctx(contributions=contributions), {"max_gap_months": 3})
-		self.assertGreaterEqual(len(out), 1)
+class TestContributionIsContextOnly(unittest.TestCase):
+	def test_contribution_gap_no_longer_a_rule(self):
+		# Contributions are context only (the payer makes contribution
+		# decisions): there is no deterministic evaluator that scores them.
+		self.assertFalse(hasattr(ev, "eval_contribution_gap"))
 
-	def test_consecutive_payments_pass(self):
+	def test_timing_anomaly_ignores_contributions(self):
+		# A future-period contribution entry must not surface as a finding.
 		contributions = {
 			"cr_id": "CR-1",
 			"contributions": [
-				{"payment_reference": "P1", "period": "2026-01"},
-				{"payment_reference": "P2", "period": "2026-02"},
-				{"payment_reference": "P3", "period": "2026-03"},
+				{"payment_reference": "P1", "period": "2099-01"},
+				{"payment_reference": "P2", "period": "2099-02"},
 			],
 		}
-		out = ev.eval_contribution_gap(_ctx(contributions=contributions), {"max_gap_months": 12})
-		# No internal gap; the tail to "today" may fire depending on the run
-		# date — the internal gap must not.
-		internal = [f for f in out if "between payment P1" in f["detail"] and "P2" in f["detail"]]
-		self.assertEqual(internal, [])
+		out = ev.eval_timing_anomaly(_ctx(contributions=contributions), {})
+		self.assertEqual(out, [])
+
+	def test_coverage_counts_contribution_lane(self):
+		contributions = {
+			"contributions": [
+				{"payment_reference": "P1", "period": "2026-01", "amount": 100},
+				{"payment_reference": "P2", "period": "2026-02", "amount": 200},
+			]
+		}
+		ctx = _ctx(contributions=contributions)
+		cov = ctx.coverage("Member full history")
+		by_key = {lane["key"]: lane for lane in cov["lanes"]}
+		self.assertEqual(by_key["contributions"]["status"], "available")
+		self.assertEqual(by_key["contributions"]["count"], 2)
+		self.assertEqual(cov["scope"], "Member full history")
+
+	def test_contribution_ledger_sorted_and_grouped(self):
+		contributions = {
+			"contributions": [
+				{"payment_reference": "P2", "period": "2026-02", "amount": 200},
+				{"payment_reference": "P1", "period": "2026-01", "amount": 100},
+			]
+		}
+		ctx = _ctx(contributions=contributions)
+		ledger = ctx.contribution_ledger()
+		self.assertEqual([e["payment_reference"] for e in ledger], ["P1", "P2"])
+
+	def test_coverage_error_detail_is_neutral(self):
+		# The raw lane error is shown in the report: internal doctype/config
+		# names must not leak into the deliverable.
+		ctx = _ctx(errors={"consent": "HISI Settings fs_base_url / fs_auth are not configured."})
+		cov = ctx.coverage("")
+		by_key = {lane["key"]: lane for lane in cov["lanes"]}
+		detail = by_key["consent"]["detail"]
+		self.assertNotIn("HISI", detail)
+		self.assertTrue(detail.startswith("site settings"))
 
 
 class TestTimingAnomaly(unittest.TestCase):
