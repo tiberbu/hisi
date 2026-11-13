@@ -26,7 +26,7 @@ from hisi.api.ai.rules.evidence import verify_findings
 from hisi.api.ai.rules.context import RuleContext
 
 #: Bump when the built-in rule catalog changes (stamped on every job).
-CATALOG_VERSION = "2.0"
+CATALOG_VERSION = "2.1"
 
 #: The AI modes (per-run or defaulted in ``HISI Report Settings``).
 AI_MODES = (
@@ -54,6 +54,10 @@ EVALUATORS = {
 	"claim_without_shr_data": ev.eval_claim_without_shr_data,
 	"shr_data_without_claim": ev.eval_shr_data_without_claim,
 	"claim_not_dispatched": ev.eval_claim_not_dispatched,
+	"cross_facility_duplicate": ev.eval_cross_facility_duplicate,
+	"consent_after_service": ev.eval_consent_after_service,
+	"preauth_period_mismatch": ev.eval_preauth_period_mismatch,
+	"medication_not_documented": ev.eval_medication_not_documented,
 }
 
 SEVERITIES = ("low", "medium", "high")
@@ -236,6 +240,11 @@ def run_rules(ctx: RuleContext, tags: list, report_settings=None) -> dict:
 				"title": finding.get("title", ""),
 				"detail": finding.get("detail", ""),
 				"evidence": [str(e) for e in (finding.get("evidence") or []) if str(e).strip()],
+				# M13 per-finding verdict: analyst override (valid / false_positive /
+				# unknown). Unknown by default; set via set_finding_verdict and stored
+				# back into this payload with the overrider's user id.
+				"verdict": str(finding.get("verdict") or "unknown").strip().lower() or "unknown",
+				"verdict_updated_by": finding.get("verdict_updated_by"),
 			}
 		)
 		provenance.append(

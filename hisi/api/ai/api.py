@@ -261,6 +261,8 @@ def get_discrepancy_report(name: str) -> None:
 		"started_at": str(doc.started_at) if doc.started_at else None,
 		"finished_at": str(doc.finished_at) if doc.finished_at else None,
 		"duration_ms": doc.duration_ms,
+		"data_as_of": str(doc.data_as_of) if doc.data_as_of else None,
+		"coverage": json.loads(doc.coverage) if doc.coverage else None,
 	}
 	if doc.status == "Success":
 		payload["report"] = doc.report
@@ -399,7 +401,7 @@ def list_discrepancy_reports(cr_id=None, status=None, page=None, page_size=None)
 	rows = frappe.get_all(
 		REPORT,
 		filters=filters,
-		fields=["name", "subject_cr_id", "subject_name", "status", "data_sources", "model", "creation", "started_at", "finished_at", "duration_ms"],
+		fields=["name", "subject_cr_id", "subject_name", "status", "data_sources", "model", "creation", "started_at", "finished_at", "duration_ms", "data_as_of"],
 		order_by="creation desc",
 		limit_start=(page - 1) * page_size,
 		limit=page_size,
@@ -414,6 +416,78 @@ def list_discrepancy_reports(cr_id=None, status=None, page=None, page_size=None)
 			"page_size": page_size,
 		}
 	)
+
+
+@frappe.whitelist(methods=["POST"])
+@api_endpoint
+def set_finding_verdict(data: str | dict = "") -> None:
+	"""M13 analyst override: set a per-finding verdict on a successful report.
+
+	Body: ``{name, finding_index, verdict}`` with verdict in
+	``valid | false_positive | unknown``. The verdict is written back into the
+	stored findings payload (the report's contract is the findings JSON — no
+	schema change needed) with an audit trail: ``verdict_updated_by`` (the
+	session user, or the ``updated_by`` override for service callers) and
+	``verdict_updated_at``. It feeds the tuning report (verdict distribution
+	per rule) and the UI's per-finding verdict chip.
+	"""
+	payload = _parse_body(data)
+	name = str(payload.get("name") or "").strip()
+	if not name:
+		raise BadRequest("name is required.")
+	try:
+		finding_index = int(payload.get("finding_index"))
+	except (TypeError, ValueError):
+		raise BadRequest("finding_index is required (integer).")
+	verdict = str(payload.get("verdict") or "unknown").strip().lower()
+	if verdict not in ("valid", "false_positive", "unknown"):
+		raise BadRequest("verdict must be one of: valid, false_positive, unknown.")
+	try:
+		doc = frappe.get_doc(REPORT, name)
+	except frappe.DoesNotExistError:
+		raise NotFound(f"Discrepancy report {name!r} not found.")
+	if doc.status != "Success":
+		raise Conflict(f"Verdicts can only be set on successful reports (status: {doc.status}).")
+	try:
+		parsed = json.loads(doc.findings) if doc.findings else None
+	except (json.JSONDecodeError, ValueError):
+		parsed = None
+	# The stored payload is the contract dict {summary, overall, findings: [...]};
+	# tolerate a bare list for older rows.
+	if isinstance(parsed, dict):
+		findings = parsed.get("findings")
+		findings = findings if isinstance(findings, list) else []
+	elif isinstance(parsed, list):
+		findings = parsed
+	else:
+		findings = []
+	if not (0 <= finding_index < len(findings)):
+		raise BadRequest(f"finding_index {finding_index} out of range (report has {len(findings)} finding(s)).")
+	updated_by = str(payload.get("updated_by") or frappe.session.user or "").strip()
+	from frappe.utils import now
+
+	finding = dict(findings[finding_index])
+	finding["verdict"] = verdict
+	finding["verdict_updated_by"] = updated_by or None
+	finding["verdict_updated_at"] = now()
+	findings[finding_index] = finding
+	new_blob = parsed if parsed is not None else []
+	if isinstance(new_blob, dict):
+		new_blob["findings"] = findings
+	else:
+		new_blob = findings
+	frappe.db.set_value(REPORT, name, "findings", json.dumps(new_blob, ensure_ascii=False), update_modified=False)
+	return APIResponse.success(
+		data={
+			"name": name,
+			"finding_index": finding_index,
+			"tag_code": finding.get("tag_code"),
+			"verdict": verdict,
+			"verdict_updated_by": finding.get("verdict_updated_by"),
+		}
+	)
+
+
 @frappe.whitelist(methods=["POST"])
 @api_endpoint
 def chat(data: str | dict = "") -> None:

@@ -1797,14 +1797,20 @@ def fs_settings() -> tuple:
         raise BadRequest("HISI Settings " + " / ".join(missing) + " are not configured.")
     return base_url, auth_path, ledger_path, username, password
 
-def fs_http_get(url: str, params, headers: dict) -> dict:
+def fs_http_get(url: str, params, headers: dict, not_found_ok: bool = False) -> dict:
     try:
         response = requests.get(url, params=params, headers=headers, timeout=upstream_timeout_seconds())
         response.raise_for_status()
     except requests.exceptions.Timeout:
         raise UpstreamError("FS request timed out.")
     except requests.exceptions.HTTPError as e:
-        raise UpstreamError("FS request failed with HTTP {}.".format(getattr(e.response, "status_code", "error")))
+        code = getattr(e.response, "status_code", None)
+        if not_found_ok and code == 404:
+            # A 404 from the ledger means the member has no contribution
+            # transactions (or is unknown to the ledger) — an empty ledger is
+            # the honest result, not a failure. Other HTTP errors still raise.
+            return {"data": {"total": 0, "data": []}}
+        raise UpstreamError("FS request failed with HTTP {}.".format(code if code is not None else "error"))
     except requests.exceptions.RequestException:
         raise UpstreamError("FS request failed.")
     try:
@@ -1863,7 +1869,7 @@ def fetch_patient_contributions(cr_id: str) -> dict:
     records = []
     total = None
     for _ in range(MAX_CONTRIBUTION_PAGES):
-        payload = fs_http_get(url, params, headers)
+        payload = fs_http_get(url, params, headers, not_found_ok=True)
         data = payload.get("data") if isinstance(payload, dict) else None
         data = data if isinstance(data, dict) else {}
         if total is None:

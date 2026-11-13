@@ -267,13 +267,16 @@ def render_report_markdown(
 	tags_by_code: dict | None = None,
 	coverage: dict | None = None,
 	contribution_ledger: list | None = None,
+	narrative_state: str | None = None,
 ) -> str:
 	"""Render the normalized result as the stored markdown report.
 
 	``coverage`` (per-lane status + counts) and ``contribution_ledger``
 	(sorted entries) mirror the PDF: the Coverage section states what the
 	review was based on; the ledger groups the contribution data in one
-	context-only section (it never drives findings)."""
+	context-only section (it never drives findings). ``narrative_state``
+	says in the report itself why the AI narrative was skipped/rejected.
+	"""
 	lines = ["# Discrepancy Report — " + (str(cr_id or "unknown member"))]
 	if subject_name:
 		lines.append("")
@@ -298,7 +301,10 @@ def render_report_markdown(
 		if any(l.get("status") in ("empty", "error") for l in coverage["lanes"]):
 			lines += ["Lanes marked Empty or Errored were not part of the evidence; findings depend only on the available lanes.", ""]
 	if result.get("summary"):
-		lines += ["## Summary", "", str(result["summary"]), ""]
+		lines += ["## Summary", ""]
+		if narrative_state:
+			lines += [f"_{narrative_state}_", ""]
+		lines += [str(result["summary"]), ""]
 	lines += ["## Findings", ""]
 	findings = result.get("findings") or []
 	if findings:

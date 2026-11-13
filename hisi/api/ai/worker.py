@@ -241,6 +241,37 @@ def _scope_results(results: dict, scoped_ctx) -> dict:
 	return out
 
 
+def _data_as_of(results: dict) -> str | None:
+	"""The newest timestamp the fetched context saw (max of record creation /
+	service dates across every lane). Stored on the job as ``data_as_of`` so
+	the UI can mark a report stale the moment newer activity lands. Returns
+	None when no lane carried a parseable date."""
+	date_keys = ("creation", "creation_date", "date_start", "date_end", "service_date", "period")
+	stamps: list[str] = []
+
+	def _walk(value) -> None:
+		if isinstance(value, dict):
+			for key in date_keys:
+				raw = value.get(key)
+				if isinstance(raw, str) and raw.strip():
+					# Keep the date part (YYYY-MM-DD) — the marker is a date-grain
+					# freshness signal, not an exact timestamp.
+					stamps.append(raw.strip()[:10])
+				continue
+			for v in value.values():
+				_walk(v)
+		elif isinstance(value, list):
+			for item in value:
+				_walk(item)
+
+	for lane in results.values():
+		_walk(lane)
+	if not stamps:
+		return None
+	best = max(stamps)
+	return best if len(best) == 10 else None
+
+
 def _run_deterministic(doc, report_name: str, settings, sources: list, results: dict, errors: dict, tags: list, mode: str, duration_ms):
 	"""The v2 pipeline: deterministic rules -> evidence verification ->
 	policy -> (optional) routed AI narrative -> render. The LLM never detects
@@ -330,6 +361,15 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 		if stage.get("result"):
 			result["summary"] = stage["result"]["summary"]
 			result["executive_summary"] = stage["result"]["executive_summary"]
+		# G6: the narrative state is surfaced in the report itself (a skipped
+		# or rejected narrative must never be silent — the audit line is not
+		# enough; the reader sees the deterministic summary is standing in).
+		if not stage.get("result"):
+			narrative_state = str(stage["warnings"][0]) if stage.get("warnings") else "no output"
+		else:
+			narrative_state = None
+	else:
+		narrative_state = None
 
 	# Pin the generation-time state (targeted field updates — same pattern as
 	# the legacy path; no doc.db_update() to clobber the atomic claim).
@@ -351,11 +391,11 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	)
 	doc.db_set("prompt_snapshot", audit, update_modified=False)
 
-	markdown = render_report_markdown(cr_id, str(doc.subject_name or ""), result, coverage=coverage, contribution_ledger=contribution_ledger)
+	markdown = render_report_markdown(cr_id, str(doc.subject_name or ""), result, coverage=coverage, contribution_ledger=contribution_ledger, narrative_state=narrative_state)
 	_mark_success(
 		report_name,
 		duration_ms(),
-		pdf_bytes=_render_pdf(doc, result, duration_ms, sources, scoped_entity, coverage=coverage, contribution_ledger=contribution_ledger),
+		pdf_bytes=_render_pdf(doc, result, duration_ms, sources, scoped_entity, coverage=coverage, contribution_ledger=contribution_ledger, narrative_state=narrative_state),
 		report=markdown,
 		findings=json.dumps(result, ensure_ascii=False),
 		usage=json.dumps(stage["usage"], ensure_ascii=False) if (mode in ("deterministic_plus_narrative", "autonomous_full") and stage.get("usage")) else None,
@@ -366,10 +406,12 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 		models_used=",".join(models_used) or "",
 		data_context_hash=context_hash,
 		findings_provenance=audit,
+		data_as_of=_data_as_of(results),
+		coverage=json.dumps(coverage, ensure_ascii=False),
 	)
 
 
-def _render_pdf(doc, result: dict, duration_ms, sources: list, scoped_claim=None, coverage: dict | None = None, contribution_ledger: list | None = None):
+def _render_pdf(doc, result: dict, duration_ms, sources: list, scoped_claim=None, coverage: dict | None = None, contribution_ledger: list | None = None, narrative_state: str | None = None):
 	"""Best-effort PDF render for a run (both pipelines): a host missing the
 	PDF engine degrades to a report without a PDF file, never a failure."""
 	try:
@@ -394,6 +436,7 @@ def _render_pdf(doc, result: dict, duration_ms, sources: list, scoped_claim=None
 			claim_status_label=status_label,
 			coverage=coverage,
 			contribution_ledger=contribution_ledger,
+			narrative_state=narrative_state,
 		)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"report pdf render {doc.name}")

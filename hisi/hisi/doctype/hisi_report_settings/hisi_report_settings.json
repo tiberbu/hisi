@@ -78,6 +78,13 @@
    "label": "Max LLM Calls (per stage)"
   },
   {
+   "default": "2",
+   "description": "Corrective retries for the narrative contract after an invalid model reply (total calls = 1 + retries). The report notes when the narrative was skipped or rejected.",
+   "fieldname": "narrative_retries",
+   "fieldtype": "Int",
+   "label": "Narrative Retries"
+  },
+  {
    "fieldname": "section_break_2",
    "fieldtype": "Section Break"
   },
