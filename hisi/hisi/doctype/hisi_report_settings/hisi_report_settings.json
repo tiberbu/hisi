@@ -18,9 +18,7 @@
   "severity_overrides",
   "section_break_3",
   "benefits_mode",
-  "benefits_cache_ttl",
-  "column_break_4",
-  "benefits_base_url"
+  "benefits_cache_ttl"
  ],
  "fields": [
   {
@@ -126,17 +124,6 @@
    "fieldname": "benefits_cache_ttl",
    "fieldtype": "Int",
    "label": "Benefits Cache TTL (minutes)"
-  },
-  {
-   "fieldname": "column_break_4",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "Base URL host for the BenefitsExchange (BMX) Intervention resource, e.g. https://uat.dha.go.ke. Empty falls back to the site DHA origin (HISI Settings base_url / simulation host). Auth is the site DHA JWT (consumer_key/consumer_secret), same as the other DHA APIs.",
-   "fieldname": "benefits_base_url",
-   "fieldtype": "Data",
-   "label": "Benefits Base URL",
-   "options": "URL"
   }
  ],
  "index_web_pages_for_search": 0,

@@ -18,6 +18,7 @@
   "med_claim_search",
   "med_preauth_search",
   "med_preauth_procedure_search",
+  "bmx_intervention_search",
   "upstream_api_timeout",
   "jwt_ttl_s",
   "data_source",
@@ -269,6 +270,12 @@
    "fieldname": "med_preauth_procedure_search",
    "fieldtype": "Data",
    "label": "Med Preauth Procedure Search"
+  },
+  {
+   "default": "/v1/bmx/resource/Intervention",
+   "fieldname": "bmx_intervention_search",
+   "fieldtype": "Data",
+   "label": "BMX Intervention Search"
   },
   {
    "default": "API",
