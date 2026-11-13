@@ -188,13 +188,104 @@ DEFAULT_TAGS = (
 		"activates when the claim payload carries a scheme field.)",
 		"scheme_mismatch",
 	),
+	# Catalog 3.0 — Tier A clinical consistency (activatable: the data is
+	# already in the payload; see clinical-consistency-spec.md).
+	# R1: a claim/preauth dated before the member's date of birth is a
+	# record-level integrity error, not a clinical question.
+	(
+		"CLAIM_BEFORE_BIRTH",
+		"Claim dated before the member's date of birth",
+		"high",
+		"A claim or preauthorization is dated before the member's date of birth — impossible by construction, "
+		"a record-level data-integrity error (identity or date corruption).",
+		"claim_before_birth",
+	),
+	# R2: same coded service billed twice in overlapping windows (identical-
+	# window pairs stay with duplicate_claim; cross-facility stays with
+	# cross_facility_duplicate).
+	(
+		"DUPLICATE_SERVICED",
+		"Same service billed on multiple overlapping claims",
+		"high",
+		"The same intervention code is billed on two or more distinct claims with overlapping service windows "
+		"at the same facility — repeat billing of one coded service.",
+		"duplicate_serviced",
+	),
+	# R3: the "what" without the "why".
+	(
+		"CLAIM_WITHOUT_DIAGNOSIS",
+		"Claim without any diagnosis",
+		"medium",
+		"The claim bills intervention(s) but carries no diagnosis codes — a clinical claim with no recorded "
+		"diagnosis.",
+		"claim_without_diagnosis",
+	),
+	# R4 (revised): an inverted service window is another record-level
+	# integrity error. (The original R4 "tariff exceeded" was dropped at
+	# implementation time: amount_mismatch already owns claim-vs-tariff with
+	# tolerance in both directions.)
+	(
+		"INVERTED_SERVICE_WINDOW",
+		"Service window ends before it starts",
+		"medium",
+		"A claim or preauthorization's service window is inverted (date_end precedes date_start) — the "
+		"submitted dates are corrupted.",
+		"inverted_service_window",
+	),
+	# Catalog 3.0 — Tier B reserved: blocked on reference datasets (WHO
+	# taxonomy / ATC pharmacology / UAT records lane / facility level). Same
+	# pattern as the two DHA-field reservations above: seeded off, activated
+	# by config when the data lands.
+	(
+		"AGE_SEX_IMPLAUSIBLE",
+		"Intervention implausible for member age/sex",
+		"medium",
+		"A claimed intervention or diagnosis is implausible for the member's age or sex. (Reserved: activates "
+		"when a clinical taxonomy mapping code -> applicable age/sex bands exists.)",
+		"age_sex_implausible",
+	),
+	(
+		"DUPLICATE_THERAPY",
+		"Duplicate therapy across overlapping claims",
+		"medium",
+		"The same therapeutic class (ATC group) is billed across overlapping claims. (Reserved: activates when "
+		"an ATC/INN pharmacology reference is bundled.)",
+		"duplicate_therapy",
+	),
+	(
+		"MANDATORY_INVESTIGATION_GAP",
+		"Mandatory investigation not documented",
+		"medium",
+		"The benefit profile lists mandatory investigations for the claimed intervention but the shared health "
+		"record holds none for the visit. (Reserved: activates when the records lane is available on the "
+		"site.)",
+		"mandatory_investigation_gap",
+	),
+	(
+		"FACILITY_LEVEL_OUT_OF_RANGE",
+		"Claimed facility outside the benefit's range",
+		"medium",
+		"The claimed facility's level is outside the benefit's facility_range. (Reserved: activates when the "
+		"facility level is available in the claim payload or facility master.)",
+		"facility_level_out_of_range",
+	),
 )
 
 
-#: Tag codes seeded switched off: the deterministic check is blocked on DHA
-#: payload fields (no preauth expiry / claim scheme data today). They activate
-#: by config (rule_type code) the moment the fields exist.
-RESERVED_TAG_CODES = frozenset({"PREAUTH_EXPIRED", "SCHEME_MISMATCH"})
+#: Tag codes seeded switched off: the deterministic check is blocked on data
+#: that does not exist yet (DHA payload fields for the first two; reference
+#: datasets for the Tier B clinical-consistency set). They activate by config
+#: (rule_type code) the moment the data exists.
+RESERVED_TAG_CODES = frozenset(
+	{
+		"PREAUTH_EXPIRED",
+		"SCHEME_MISMATCH",
+		"AGE_SEX_IMPLAUSIBLE",
+		"DUPLICATE_THERAPY",
+		"MANDATORY_INVESTIGATION_GAP",
+		"FACILITY_LEVEL_OUT_OF_RANGE",
+	}
+)
 
 
 def ensure_default_tags() -> int:

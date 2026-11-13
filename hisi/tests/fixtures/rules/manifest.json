@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": "3.1",
  "fixtures": [
   {
    "name": "xface_pos_basic",
@@ -1218,7 +1218,9 @@
      ]
     }
    },
-   "expect_codes": [],
+   "expect_codes": [
+    "INVERTED_SERVICE_WINDOW"
+   ],
    "absent_codes": [
     "PREAUTH_PERIOD_MISMATCH"
    ],
@@ -1769,6 +1771,700 @@
     "CLAIM_NOT_DISPATCHED"
    ],
    "absent_codes": [],
+   "params": {}
+  },
+  {
+   "name": "cbb_pos_before_birth",
+   "context": {
+    "member": {
+     "date_of_birth": "1980-06-15",
+     "name": "John Doe"
+    },
+    "claims": [
+     {
+      "name": "CLM-CBB",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "1979-01-02 09:00:00",
+      "creation_date": "1979-01-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "1979-01-01",
+      "date_end": "1979-01-01",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "1979-00-31 09:00:00",
+      "creation_date": "1979-00-31"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ]
+    }
+   },
+   "expect_codes": [
+    "CLAIM_BEFORE_BIRTH"
+   ],
+   "absent_codes": [],
+   "params": {}
+  },
+  {
+   "name": "cbb_neg_after_birth",
+   "context": {
+    "member": {
+     "date_of_birth": "1980-06-15",
+     "name": "John Doe"
+    },
+    "claims": [
+     {
+      "name": "CLM-CBB",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "1990-05-02 09:00:00",
+      "creation_date": "1990-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "1990-05-01",
+      "date_end": "1990-05-01",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "1990-04-31 09:00:00",
+      "creation_date": "1990-04-31"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ]
+    }
+   },
+   "expect_codes": [],
+   "absent_codes": [
+    "CLAIM_BEFORE_BIRTH"
+   ],
+   "params": {}
+  },
+  {
+   "name": "dsvc_pos_overlapping_same_facility",
+   "context": {
+    "claims": [
+     {
+      "name": "CLM-D1",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-01",
+      "date_end": "2026-05-10",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     },
+     {
+      "name": "CLM-D2",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-05",
+      "date_end": "2026-05-15",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-2",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-04-31 09:00:00",
+      "creation_date": "2026-04-31"
+     },
+     {
+      "name": "CNS-V-2",
+      "client": "CR-1",
+      "visit_id": "V-2",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-05-04 09:00:00",
+      "creation_date": "2026-05-04"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ],
+     "V-2": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-2"
+      }
+     ]
+    }
+   },
+   "expect_codes": [
+    "DUPLICATE_SERVICED"
+   ],
+   "absent_codes": [
+    "DUPLICATE_CLAIM",
+    "CROSS_FACILITY_DUPLICATE"
+   ],
+   "params": {}
+  },
+  {
+   "name": "dsvc_neg_disjoint_windows",
+   "context": {
+    "claims": [
+     {
+      "name": "CLM-D1",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-01",
+      "date_end": "2026-05-10",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     },
+     {
+      "name": "CLM-D2",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-20",
+      "date_end": "2026-05-25",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-2",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-04-31 09:00:00",
+      "creation_date": "2026-04-31"
+     },
+     {
+      "name": "CNS-V-2",
+      "client": "CR-1",
+      "visit_id": "V-2",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-05-19 09:00:00",
+      "creation_date": "2026-05-19"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ],
+     "V-2": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-2"
+      }
+     ]
+    }
+   },
+   "expect_codes": [],
+   "absent_codes": [
+    "DUPLICATE_SERVICED",
+    "DUPLICATE_CLAIM"
+   ],
+   "params": {}
+  },
+  {
+   "name": "dsvc_boundary_identical_windows",
+   "context": {
+    "claims": [
+     {
+      "name": "CLM-D1",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-01",
+      "date_end": "2026-05-05",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     },
+     {
+      "name": "CLM-D2",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-01",
+      "date_end": "2026-05-05",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-2",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-04-31 09:00:00",
+      "creation_date": "2026-04-31"
+     },
+     {
+      "name": "CNS-V-2",
+      "client": "CR-1",
+      "visit_id": "V-2",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-04-31 09:00:00",
+      "creation_date": "2026-04-31"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ],
+     "V-2": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-2"
+      }
+     ]
+    }
+   },
+   "expect_codes": [
+    "DUPLICATE_CLAIM"
+   ],
+   "absent_codes": [
+    "DUPLICATE_SERVICED"
+   ],
+   "params": {}
+  },
+  {
+   "name": "nodx_pos_no_diagnosis",
+   "context": {
+    "claims": [
+     {
+      "name": "CLM-NX",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-01",
+      "date_end": "2026-05-01",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [],
+      "diagnoses": [],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-04-31 09:00:00",
+      "creation_date": "2026-04-31"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ]
+    }
+   },
+   "expect_codes": [
+    "CLAIM_WITHOUT_DIAGNOSIS"
+   ],
+   "absent_codes": [],
+   "params": {}
+  },
+  {
+   "name": "nodx_neg_has_diagnosis",
+   "context": {
+    "claims": [
+     {
+      "name": "CLM-NX",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-01",
+      "date_end": "2026-05-01",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-04-31 09:00:00",
+      "creation_date": "2026-04-31"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ]
+    }
+   },
+   "expect_codes": [],
+   "absent_codes": [
+    "CLAIM_WITHOUT_DIAGNOSIS"
+   ],
+   "params": {}
+  },
+  {
+   "name": "invs_pos_inverted",
+   "context": {
+    "claims": [
+     {
+      "name": "CLM-IV",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-10",
+      "date_end": "2026-05-01",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-05-09 09:00:00",
+      "creation_date": "2026-05-09"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ]
+    }
+   },
+   "expect_codes": [
+    "INVERTED_SERVICE_WINDOW"
+   ],
+   "absent_codes": [],
+   "params": {}
+  },
+  {
+   "name": "invs_neg_normal_window",
+   "context": {
+    "claims": [
+     {
+      "name": "CLM-IV",
+      "client": "CR-1",
+      "client_name": "John Doe",
+      "facility": "FAC-1",
+      "facility_name": "Hospital A",
+      "creation": "2026-05-02 10:00:00",
+      "creation_date": "2026-05-02",
+      "claim_status": "Submitted",
+      "claim_amount": 50000.0,
+      "claim_subtype": "",
+      "use": "claim",
+      "date_start": "2026-05-01",
+      "date_end": "2026-05-10",
+      "interventions_code": [
+       "SHA-15-001"
+      ],
+      "interventions": [
+       "Consultation"
+      ],
+      "diagnoses_code": [
+       "E11.9"
+      ],
+      "diagnoses": [
+       "Diabetes"
+      ],
+      "visit_id": "V-1",
+      "bundle_id": "B-1"
+     }
+    ],
+    "consents": [
+     {
+      "name": "CNS-V-1",
+      "client": "CR-1",
+      "visit_id": "V-1",
+      "facility_id": "FAC-1",
+      "consent_status": "Approved",
+      "status": "Approved",
+      "creation": "2026-04-31 09:00:00",
+      "creation_date": "2026-04-31"
+     }
+    ],
+    "shr_by_visit": {
+     "V-1": [
+      {
+       "resourceType": "Encounter",
+       "id": "enc-V-1"
+      }
+     ]
+    }
+   },
+   "expect_codes": [],
+   "absent_codes": [
+    "INVERTED_SERVICE_WINDOW"
+   ],
    "params": {}
   }
  ]

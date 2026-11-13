@@ -1017,3 +1017,164 @@ def eval_medication_not_documented(ctx: RuleContext, params: dict) -> list:
 			_finding("MEDICATION_NOT_DOCUMENTED", "medium", "Claimed medication with no prescription documentation", detail, refs)
 		)
 	return _cap(findings, params)
+
+
+# ---------------------------------------------------------------------------
+# Catalog 3.0 — Tier A clinical-consistency rules (data available today)
+
+
+def _member_birth_date(ctx: RuleContext):
+	"""The member's date of birth from the register (parseable date or None)."""
+	member = ctx.member
+	if not isinstance(member, dict):
+		return None
+	return _parse_date(member.get("date_of_birth"))
+
+
+def eval_claim_before_birth(ctx: RuleContext, params: dict) -> list:
+	"""A claim or preauthorization dated before the member's date of birth.
+
+	Impossible by construction — this is a record-level data-integrity error
+	(identity mix-up or date corruption), not a clinical question, so it is
+	high severity. Fail-closed: needs a parseable DOB on the member register
+	AND a parseable service/creation date on the record (the window start is
+	preferred; the record creation date is the fallback the record can still
+	prove)."""
+	birth = _member_birth_date(ctx)
+	if birth is None:
+		return []
+	findings = []
+	seen = set()
+	for step, records in (("claims", ctx.claims), ("preauth", ctx.preauths)):
+		for rec in records:
+			name = rec.get("name")
+			if not name or name in seen:
+				continue
+			seen.add(name)
+			start = _parse_date(rec.get("date_start"))
+			if start is None:
+				start = _parse_date(rec.get("creation"))
+			if start is None:
+				continue
+			if start < birth:
+				gap = (birth - start).days
+				field = "date_start" if _parse_date(rec.get("date_start")) else "creation"
+				quoted = str(rec.get("date_start") or rec.get("creation") or "")
+				detail = (
+					f"{_claim_label(rec).replace('claim ', '')} ({step.rstrip()}) is dated {start.isoformat()}, which is "
+					f"{gap} days before the member's date of birth ({birth.isoformat()}). A service date "
+					"preceding birth is impossible — this is a record-level data-integrity error "
+					"(identity or date corruption) and should be corrected at source."
+				)
+				refs = [
+					_ref(step, name, field, quoted),
+					_ref("patient", ctx.cr_id, "date_of_birth", birth.isoformat()),
+				]
+				findings.append(_finding("CLAIM_BEFORE_BIRTH", "high", "Claim dated before the member's date of birth", detail, refs))
+	return _cap(findings, params)
+
+
+def eval_duplicate_serviced(ctx: RuleContext, params: dict) -> list:
+	"""The same intervention code billed on two or more distinct claims with
+	overlapping service windows at the same facility (or with facility data
+	absent) — repeat billing of one coded service.
+
+	Boundary (no double-reporting): pairs with IDENTICAL (date_start,
+	date_end) are ``duplicate_claim``'s exact-duplicate territory and are
+	skipped here; pairs at DIFFERENT facilities are ``cross_facility_duplicate``
+	's territory and are skipped. What remains is the repeat-service pattern:
+	same code, same (or unknown) facility, overlapping but not identical
+	windows. Fail-closed: needs the code on both claims."""
+	findings = []
+	claims = [c for c in ctx.claims if isinstance(c, dict) and c.get("name")]
+	by_code = {}
+	for claim in claims:
+		for code in claim.get("interventions_code") or []:
+			code = str(code).strip()
+			if code:
+				by_code.setdefault(code, []).append(claim)
+	for code in sorted(by_code):
+		group = by_code[code]
+		if len(group) < 2:
+			continue
+		dupes = set()
+		for i, a in enumerate(group):
+			a_fac = str(a.get("facility") or "").strip().lower()
+			for b in group[i + 1 :]:
+				b_fac = str(b.get("facility") or "").strip().lower()
+				if a_fac and b_fac and a_fac != b_fac:
+					continue  # cross-facility pair -> cross_facility_duplicate
+				if a.get("date_start") and b.get("date_start") and (
+					(a.get("date_start"), a.get("date_end")) == (b.get("date_start"), b.get("date_end"))
+				):
+					continue  # identical window pair -> duplicate_claim
+				if _windows_overlap(a, b, params):
+					dupes.add(a["name"])
+					dupes.add(b["name"])
+		if len(dupes) < 2:
+			continue
+		members = [c for c in group if c["name"] in dupes]
+		windows = "; ".join(
+			f"{c.get('name')} ({c.get('date_start') or '?'} to {c.get('date_end') or c.get('date_start') or '?'})"
+			for c in members[:4]
+		)
+		detail = (
+			f"The same intervention code {code} is billed on {len(members)} distinct claims with overlapping "
+			f"service windows: {windows}. Repeat billing of one coded service at the same facility — verify "
+			"against the service records before escalation."
+		)
+		refs = [_ref("claims", c.get("name"), "interventions_code", code) for c in members[:4]]
+		findings.append(_finding("DUPLICATE_SERVICED", "high", "Same service billed on multiple overlapping claims", detail, refs))
+	return _cap(findings, params)
+
+
+def eval_claim_without_diagnosis(ctx: RuleContext, params: dict) -> list:
+	"""A claim bills intervention(s) but carries no diagnosis codes at all —
+	the "what" has no recorded "why". Preauths are excluded (their own
+	PREAUTH_* family covers them). Fail-closed: needs at least one
+	intervention code; a claim with no codes at all is not this rule's call."""
+	findings = []
+	for claim in ctx.claims:
+		codes = [c for c in (claim.get("interventions_code") or []) if str(c).strip()]
+		if not codes:
+			continue
+		if any(str(d).strip() for d in (claim.get("diagnoses_code") or [])):
+			continue
+		detail = (
+			f"{_claim_label(claim)} bills intervention(s) {', '.join(codes[:4])} but carries no diagnosis codes — "
+			"a clinical claim with no recorded diagnosis. Verify whether the diagnosis was omitted at submission."
+		)
+		refs = [_ref("claims", claim.get("name"), "interventions_code", codes[0])]
+		findings.append(_finding("CLAIM_WITHOUT_DIAGNOSIS", "medium", "Claim without any diagnosis", detail, refs))
+	return _cap(findings, params)
+
+
+def eval_inverted_service_window(ctx: RuleContext, params: dict) -> list:
+	"""A claim or preauthorization whose service window is inverted: date_end
+	precedes date_start. Impossible by construction — a data-integrity error
+	in the submitted dates. Fail-closed: needs both dates parseable."""
+	findings = []
+	seen = set()
+	for step, records in (("claims", ctx.claims), ("preauth", ctx.preauths)):
+		for rec in records:
+			name = rec.get("name")
+			if not name or name in seen:
+				continue
+			seen.add(name)
+			start = _parse_date(rec.get("date_start"))
+			end = _parse_date(rec.get("date_end"))
+			if start is None or end is None:
+				continue
+			if end < start:
+				gap = (start - end).days
+				detail = (
+					f"{_claim_label(rec).replace('claim ', '')} ({step.rstrip()}) has an inverted service window: it "
+					f"ends {end.isoformat()}, which is {gap} days before its start ({start.isoformat()}). The "
+					"submitted dates are corrupted and should be corrected at source."
+				)
+				refs = [
+					_ref(step, name, "date_start", str(rec.get("date_start") or "")),
+					_ref(step, name, "date_end", str(rec.get("date_end") or "")),
+				]
+				findings.append(_finding("INVERTED_SERVICE_WINDOW", "medium", "Service window ends before it starts", detail, refs))
+	return _cap(findings, params)

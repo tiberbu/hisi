@@ -52,6 +52,7 @@ def _build_context(case: dict) -> RuleContext:
 		eligibility=data.get("eligibility") or {"eligible": True, "status": "active", "scheme": "SHA", "schemes": []},
 		consents=consents,
 		consent_by_visit={str(c.get("visit_id")): c for c in consents if c.get("visit_id")},
+		member=data.get("member"),
 		claims=data.get("claims") or [],
 		preauths=data.get("preauths") or [],
 		contributions=data.get("contributions"),

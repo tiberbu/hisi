@@ -26,7 +26,7 @@ from hisi.api.ai.rules.evidence import verify_findings
 from hisi.api.ai.rules.context import RuleContext
 
 #: Bump when the built-in rule catalog changes (stamped on every job).
-CATALOG_VERSION = "2.1"
+CATALOG_VERSION = "3.0"
 
 #: The AI modes (per-run or defaulted in ``HISI Report Settings``).
 AI_MODES = (
@@ -58,6 +58,11 @@ EVALUATORS = {
 	"consent_after_service": ev.eval_consent_after_service,
 	"preauth_period_mismatch": ev.eval_preauth_period_mismatch,
 	"medication_not_documented": ev.eval_medication_not_documented,
+	# Catalog 3.0 — Tier A clinical consistency (data available today).
+	"claim_before_birth": ev.eval_claim_before_birth,
+	"duplicate_serviced": ev.eval_duplicate_serviced,
+	"claim_without_diagnosis": ev.eval_claim_without_diagnosis,
+	"inverted_service_window": ev.eval_inverted_service_window,
 }
 
 SEVERITIES = ("low", "medium", "high")
