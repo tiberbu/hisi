@@ -35,10 +35,10 @@ BMX_INTERVENTION_PATH = "/v1/bmx/resource/Intervention"
 #: present key (tolerant: the exact BMX field names are matched here).
 PROFILE_KEYS = {
 	"intervention_name": ("intervention_name", "name", "title", "description"),
-	"benefit_code": ("benefit_code", "benefit", "package"),
-	"sub_benefit": ("sub_benefit", "subbenefit", "subcategory"),
+	"benefit_code": ("benefit_code", "benefits_exchange_code", "benefit", "package"),
+	"sub_benefit": ("sub_benefit", "service_category", "package_subcategory", "subbenefit", "subcategory"),
 	"complexity": ("complexity",),
-	"tariff": ("tariff", "tariff_amount", "rate", "amount", "cap", "cap_amount", "benefit_amount", "unit_amount", "price"),
+	"tariff": ("tarrif_limit", "tarrif", "tariff", "tariff_amount", "rate", "amount", "cap", "cap_amount", "benefit_amount", "unit_amount", "price"),
 	"facility_range": ("facility_range", "facility_levels", "levels", "facility_scale"),
 	"payment_mechanism": ("payment_mechanism", "payment_type", "mechanism"),
 	"frequency": ("frequency", "limit", "limitation"),
@@ -50,6 +50,7 @@ PROFILE_KEYS = {
 #: flag, in priority order. Not all interventions require preauth — the
 #: MISSING_PREAUTH rule only fires when this flag resolves to True.
 _PREAUTH_KEYS = (
+	"needs_preauth",
 	"preauth_required",
 	"preauthorization_required",
 	"requires_preauthorization",
@@ -68,6 +69,17 @@ CACHE_KEY = "hisi:benefits_exchange:{}"
 
 def _cache():
 	return frappe.cache()
+
+
+def _cache_set(key: str, value, ttl_sec: int) -> None:
+	"""Cache write tolerant to the ``set_value`` expiry kwarg name across
+	Frappe versions (``expires_in_sec`` in this build, ``expires_in`` in
+	others)."""
+	cache = _cache()
+	try:
+		cache.set_value(key, value, expires_in_sec=ttl_sec)
+	except TypeError:
+		cache.set_value(key, value, expires_in=ttl_sec)
 
 
 def _cache_ttl_sec(settings) -> int:
@@ -118,7 +130,7 @@ def query_live(code: str, settings, timeout_sec: int = 20) -> dict | None:
 	if not isinstance(payload, dict):
 		frappe.log_error(f"BenefitsExchange {code!r} returned no JSON object", "BenefitsExchange")
 		return None
-	cache.set_value(key, {"payload": payload, "at": int(time.time())}, expires_in=_cache_ttl_sec(settings))
+	_cache_set(key, {"payload": payload, "at": int(time.time())}, _cache_ttl_sec(settings))
 	return payload
 
 

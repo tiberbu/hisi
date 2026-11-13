@@ -465,6 +465,35 @@ class TestBenefitsExchangeNormalizer(unittest.TestCase):
 		self.assertIsNone(self._norm({"data": []}))
 		self.assertIsNone(self._norm("not a dict"))
 
+	def test_real_dha_bmx_wire_format(self):
+		# Authoritative sample shape from the live UAT BMX endpoint
+		# (2026-11-13): data list wrapper, "tarrif"/"tarrif_limit" spelling,
+		# needs_preauth flag, service_category, benefits_exchange_code.
+		row = self._norm(
+			{
+				"data": [
+					{
+						"name": "INT-00920",
+						"intervention_name": "Consultation",
+						"intervention_code": "SHA-12-001",
+						"benefits_exchange_code": "TBX-10021",
+						"service_category": "Outpatient",
+						"payment_mechanism": "Capitation",
+						"tarrif": 75.0,
+						"tarrif_limit": 75.0,
+						"needs_preauth": 0,
+						"retired": 0,
+					}
+				]
+			}
+		)
+		self.assertEqual(row["intervention_name"], "Consultation")
+		self.assertEqual(row["tariff"], 75.0)
+		self.assertIs(row["preauth_required"], False)
+		self.assertEqual(row["sub_benefit"], "Outpatient")
+		self.assertEqual(row["benefit_code"], "TBX-10021")
+		self.assertEqual(row["payment_mechanism"], "Capitation")
+
 
 if __name__ == "main":
 	unittest.main()
