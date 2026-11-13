@@ -11,6 +11,8 @@
   "subject_name",
   "status",
   "data_sources",
+  "ai_mode",
+  "ai_mode_used",
   "column_break_1",
   "tag_snapshot",
   "prompt_snapshot",
@@ -23,7 +25,13 @@
   "started_at",
   "finished_at",
   "duration_ms",
-  "error"
+  "error",
+  "section_break_3",
+  "catalog_version",
+  "benefits_source",
+  "models_used",
+  "data_context_hash",
+  "findings_provenance"
  ],
  "fields": [
   {
@@ -63,6 +71,19 @@
    "fieldtype": "Small Text",
    "in_list_view": 1,
    "label": "Data Sources"
+  },
+  {
+   "description": "The AI mode requested for this run (per-run override; honoured only when HISI Report Settings allows it, else the configured default is used).",
+   "fieldname": "ai_mode",
+   "fieldtype": "Data",
+   "label": "AI Mode (requested)"
+  },
+  {
+   "description": "The AI mode the run actually used (deterministic_only, deterministic_plus_narrative, autonomous_full or legacy_llm).",
+   "fieldname": "ai_mode_used",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "AI Mode Used"
   },
   {
    "fieldname": "column_break_1",
@@ -133,6 +154,40 @@
    "fieldname": "error",
    "fieldtype": "Long Text",
    "label": "Error (JSON)"
+  },
+  {
+   "fieldname": "section_break_3",
+   "fieldtype": "Section Break"
+  },
+  {
+   "description": "The rule catalog version the run executed (HISI Discrepancy Tag rule catalog + evaluator code).",
+   "fieldname": "catalog_version",
+   "fieldtype": "Data",
+   "label": "Catalog Version"
+  },
+  {
+   "description": "Where the benefits knowledge came from for this run: static (the HISI Benefit Intervention matrix) or live (the BenefitsExchange endpoint).",
+   "fieldname": "benefits_source",
+   "fieldtype": "Data",
+   "label": "Benefits Source"
+  },
+  {
+   "description": "Comma-separated list of the LLM models actually called by this run (empty when no LLM was called, e.g. deterministic_only).",
+   "fieldname": "models_used",
+   "fieldtype": "Small Text",
+   "label": "Models Used"
+  },
+  {
+   "description": "SHA-256 of the fetched data context (inputs fingerprint for reproducibility).",
+   "fieldname": "data_context_hash",
+   "fieldtype": "Data",
+   "label": "Data Context Hash"
+  },
+  {
+   "description": "Per-finding provenance JSON: [{tag_code, title, severity, source, catalog_version, verified, evidence_refs}] — includes findings quarantined by evidence verification (audit trail).",
+   "fieldname": "findings_provenance",
+   "fieldtype": "Long Text",
+   "label": "Findings Provenance (JSON)"
   }
  ],
  "index_web_pages_for_search": 0,

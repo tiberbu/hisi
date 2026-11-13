@@ -8,3 +8,4 @@
 hisi.patches.orgs_to_erpnext
 hisi.patches.drop_org_doctypes
 hisi.patches.field_surveillance_templates
+hisi.patches.extend_discrepancy_tags

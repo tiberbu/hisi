@@ -32,6 +32,7 @@ import frappe
 from hisi.api.ai import llm_client, report_pdf
 from hisi.api.ai.benefits_registry import matched_benefits_lines
 from hisi.api.ai.prompt import DEFAULT_SYSTEM_PROMPT, build_data_context, effective_benefits_reference
+from hisi.api.ai.rules.engine import AI_MODES  # noqa: F401  (re-exported for API consumers)
 from hisi.api.ai.seed import ensure_default_tags
 from hisi.api.ai.settings import get_ai_settings
 from hisi.api.patient import (
@@ -98,6 +99,9 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 	if not cr_id:
 		raise BadRequest("cr_id is required.")
 	force = bool(body.get("force"))
+	ai_mode = str(body.get("ai_mode") or "").strip().lower()
+	if ai_mode and ai_mode not in AI_MODES:
+		raise BadRequest(f"ai_mode must be one of: {', '.join(AI_MODES)}.")
 	tag_codes = body.get("tag_codes")
 	if tag_codes is not None:
 		if not isinstance(tag_codes, list) or not all(isinstance(code, str) for code in tag_codes):
@@ -121,11 +125,21 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 	filters = {"enabled": 1}
 	if tag_codes:
 		filters["tag_code"] = ["in", tag_codes]
-	tags = frappe.get_all(TAG, filters=filters, fields=["tag_code", "label", "instruction", "severity"])
+	tags = frappe.get_all(TAG, filters=filters, fields=["tag_code", "label", "instruction", "severity", "rule_type", "rule_key", "parameters", "severity_policy", "version"])
 	if not tags:
 		raise BadRequest("No enabled discrepancy tags to run (enable tags or set tag_codes).")
 	snapshot = [
-		{"tag_code": t.tag_code, "label": t.label, "instruction": t.instruction, "severity": t.severity}
+		{
+			"tag_code": t.tag_code,
+			"label": t.label,
+			"instruction": t.instruction,
+			"severity": t.severity,
+			"rule_type": t.rule_type or "code",
+			"rule_key": t.rule_key or "",
+			"parameters": t.parameters or "",
+			"severity_policy": t.severity_policy or "fixed",
+			"version": t.version,
+		}
 		for t in tags
 	]
 	doc = frappe.get_doc(
@@ -135,6 +149,7 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 			"subject_cr_id": cr_id,
 			"status": "Queued",
 			"tag_snapshot": json.dumps(snapshot, ensure_ascii=False),
+			"ai_mode": ai_mode or None,
 		}
 	)
 	doc.insert()
@@ -212,6 +227,11 @@ def get_discrepancy_report(name: str) -> None:
 		"subject_name": doc.subject_name,
 		"status": doc.status,
 		"data_sources": doc.data_sources,
+		"ai_mode_used": doc.ai_mode_used,
+		"catalog_version": doc.catalog_version,
+		"benefits_source": doc.benefits_source,
+		"models_used": doc.models_used,
+		"data_context_hash": doc.data_context_hash,
 		"model": doc.model,
 		"creation": str(doc.creation) if doc.creation else None,
 		"started_at": str(doc.started_at) if doc.started_at else None,
@@ -224,6 +244,16 @@ def get_discrepancy_report(name: str) -> None:
 			payload["findings"] = json.loads(doc.findings) if doc.findings else None
 		except (json.JSONDecodeError, ValueError):
 			payload["findings"] = None
+		if doc.findings_provenance:
+			try:
+				provenance = json.loads(doc.findings_provenance)
+				# The audit blob: {mode, catalog_version, benefits_source, warnings, findings}
+				# — expose the per-finding provenance list (the audit extras stay on the doc).
+				payload["findings_provenance"] = provenance.get("findings") if isinstance(provenance, dict) else provenance
+				if isinstance(provenance, dict) and provenance.get("warnings"):
+					payload["warnings"] = provenance["warnings"]
+			except (json.JSONDecodeError, ValueError):
+				payload["findings_provenance"] = None
 		payload["pdf"] = _attached_report_pdf(doc.name)
 	elif doc.status == "Failed":
 		try:
