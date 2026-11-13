@@ -180,9 +180,15 @@ def _resolve_record(ctx: RuleContext, step: str, record_ref: str):
 		visit_id, _, rest = record_ref.partition("#")
 		rtype, _, index = rest.partition("#")
 		resources = ctx.shr_by_visit.get(visit_id) or []
-		for idx, resource in enumerate(resources):
-			if str(resource.get("resourceType") or "") == rtype and str(idx) == index:
+		# Index = the n-th resource of that type at the visit (not the
+		# position in the full per-visit list).
+		count = 0
+		for resource in resources:
+			if str(resource.get("resourceType") or "") != rtype:
+				continue
+			if str(count) == index:
 				return resource, True
+			count += 1
 		return None, False
 	return None, False
 

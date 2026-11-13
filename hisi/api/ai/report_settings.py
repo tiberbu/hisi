@@ -35,16 +35,14 @@ DEFAULTS = {
 	"severity_overrides": None,
 	"benefits_mode": "static",
 	"benefits_cache_ttl": 1440,
-	"benefits_endpoint": None,
-	"benefits_api_key": None,
-	"benefits_query_params": None,
+	"benefits_base_url": None,
 }
 
 _VALID_MODES = ("deterministic_only", "deterministic_plus_narrative", "autonomous_full", "legacy_llm")
 _VALID_EVIDENCE_POLICIES = ("exclude", "mark")
 _VALID_BENEFITS_MODES = ("static", "live")
 
-_SECRET_FIELDS = ("benefits_api_key",)
+_SECRET_FIELDS = ()
 
 _INT_FIELDS = ("max_input_tokens", "max_llm_calls", "benefits_cache_ttl")
 

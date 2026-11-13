@@ -309,32 +309,40 @@ def eval_amount_mismatch(ctx: RuleContext, params: dict) -> list:
 	return _cap(findings, params)
 
 
-def eval_missing_preauth(ctx: RuleContext, params: dict) -> list:
-	"""Expensive/regulated services claimed without a preauthorization on
-	file. A code is preauth-required when (a) the registry row's mandatory
-	documents mention a preauthorization form, or (b) the code family is in
-	``preauth_required_families`` (default: ``SHA-19`` surgical services —
-	per the benefits matrix every SHA-19 procedure requires prior
-	authorization). A matching preauth record (same code) on file clears
-	the check."""
-	families = params.get("preauth_required_families") or ["SHA-19"]
-	families = [str(f).strip().upper() for f in families if str(f).strip()]
-	grace_days = int(params.get("grace_days", 30))
+def _preauth_required(row: dict | None) -> bool:
+	"""True only when the benefit profile (live BenefitsExchange row or the
+	static matrix fallback) explicitly flags the intervention as requiring
+	preauthorization.
 
+	Not every intervention requires preauth — per the BenefitsExchange spec
+	the flag is authoritative, so an absent/unknown flag means "not required
+	as far as we know" and the check stays silent (no guessing by code
+	family or document text)."""
+	if not isinstance(row, dict):
+		return False
+	value = row.get("preauth_required")
+	if value in (None, ""):
+		return False
+	if isinstance(value, bool):
+		return value
+	if isinstance(value, (int, float)):
+		return bool(value)
+	return str(value).strip().lower() in ("1", "yes", "y", "true", "required")
+
+
+def eval_missing_preauth(ctx: RuleContext, params: dict) -> list:
+	"""Services claimed without a preauthorization on file, where the
+	benefits matrix says one is required.
+
+	Whether a code is preauth-required is the ``preauth_required`` flag on its
+	benefit profile (live BenefitsExchange value, static matrix otherwise) —
+	not every intervention requires preauthorization, so only flagged codes
+	are checked. A matching preauth record (same code) on file clears the
+	check."""
 	required: dict = {}
 	for claim in ctx.claims:
 		for code in claim.get("interventions_code") or []:
-			row = ctx.registry.get(code)
-			needs = False
-			if row:
-				mandatory = " ".join(
-					str(row.get(k) or "") for k in ("mandatory_documents", "mandatory_investigations")
-				).lower()
-				if "preauthorization" in mandatory or "pre-auth" in mandatory:
-					needs = True
-			if any(code.startswith(family) for family in families):
-				needs = True
-			if needs and code not in required:
+			if _preauth_required(ctx.registry.get(code)) and code not in required:
 				required[code] = claim
 
 	preauth_codes = {code for p in ctx.preauths for code in (p.get("interventions_code") or [])}
@@ -342,10 +350,8 @@ def eval_missing_preauth(ctx: RuleContext, params: dict) -> list:
 	for code, claim in sorted(required.items()):
 		if code in preauth_codes:
 			continue
-		name = ""
 		row = ctx.registry.get(code)
-		if row:
-			name = str(row.get("intervention_name") or "").strip()
+		name = str(row.get("intervention_name") or "").strip() if row else ""
 		detail = (
 			f"{_claim_label(claim)} claims intervention {code} ({name or 'unpriced intervention'}) "
 			f"({_claim_date_label(claim)}) with no preauthorization record on file for that code. "
@@ -354,6 +360,9 @@ def eval_missing_preauth(ctx: RuleContext, params: dict) -> list:
 		refs = [_ref("claims", claim.get("name"), "interventions_code", code)]
 		refs.append(_ref("claims", claim.get("name"), "name", claim.get("name")))
 		if row:
+			# Quote the stored flag value itself — the verifier re-matches the
+			# citation against the row, so a display label would fail.
+			refs.append(_ref("registry", code, "preauth_required", row.get("preauth_required")))
 			refs.append(_ref("registry", code, "intervention_name", row.get("intervention_name")))
 		findings.append(_finding("MISSING_PREAUTH", "high", f"Claimed without preauthorization ({code})", detail, refs))
 	return _cap(findings, params)

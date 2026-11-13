@@ -24,20 +24,21 @@ import json
 import time
 
 import frappe
-import requests
 
-#: The live query hits ``<endpoint>?<params>&<code_param>=<code>``.
-DEFAULT_CODE_PARAM = "code"
+#: The BenefitsExchange (BMX) Intervention resource path under the base
+#: host. The API is a pure function of the intervention code (per the
+#: endpoint spec): ``?fields=["*"]&filters=[["intervention_code","=",code]]``
+#: — so a code's result is trivially cacheable per code.
+BMX_INTERVENTION_PATH = "/v1/bmx/resource/Intervention"
 
 #: Candidate wire keys per registry field — the normalizer takes the first
-#: present key (the exact names are confirmed against the endpoint and
-#: locked in here).
+#: present key (tolerant: the exact BMX field names are matched here).
 PROFILE_KEYS = {
 	"intervention_name": ("intervention_name", "name", "title", "description"),
 	"benefit_code": ("benefit_code", "benefit", "package"),
 	"sub_benefit": ("sub_benefit", "subbenefit", "subcategory"),
 	"complexity": ("complexity",),
-	"tariff": ("tariff", "tariff_amount", "rate", "amount", "price"),
+	"tariff": ("tariff", "tariff_amount", "rate", "amount", "cap", "cap_amount", "benefit_amount", "unit_amount", "price"),
 	"facility_range": ("facility_range", "facility_levels", "levels", "facility_scale"),
 	"payment_mechanism": ("payment_mechanism", "payment_type", "mechanism"),
 	"frequency": ("frequency", "limit", "limitation"),
@@ -45,7 +46,22 @@ PROFILE_KEYS = {
 	"mandatory_investigations": ("mandatory_investigations", "required_investigations", "investigations"),
 }
 
-_PREAUTH_KEYS = ("preauth_required", "requires_preauthorization", "prior_authorization_required", "preauthorization_required")
+#: Keys that carry the "does this intervention require preauthorization?"
+#: flag, in priority order. Not all interventions require preauth — the
+#: MISSING_PREAUTH rule only fires when this flag resolves to True.
+_PREAUTH_KEYS = (
+	"preauth_required",
+	"preauthorization_required",
+	"requires_preauthorization",
+	"prior_authorization_required",
+	"authorization_required",
+	"preauth",
+	"authorization_flag",
+)
+
+#: Values that count as "preauth NOT required" (so an explicit negative
+#: doesn't get treated as unknown).
+_PREAUTH_FALSE_VALUES = ("", "0", "no", "n", "false", "none", "not_required", "not required", "n/a")
 
 CACHE_KEY = "hisi:benefits_exchange:{}"
 
@@ -61,69 +77,46 @@ def _cache_ttl_sec(settings) -> int:
 		return 1440 * 60
 
 
-def _live_configured(settings) -> bool:
-	return bool(str(settings.get("benefits_endpoint") or "").strip())
+def _live_base_url(settings) -> str:
+	"""The BMX host: the configured ``benefits_base_url``, else the site's
+	DHA origin (the production base, or the simulation host when UAT
+	simulation is on)."""
+	from hisi.api import patient as P
 
-
-def _code_param(settings) -> str:
-	try:
-		params = settings.get("benefits_query_params")
-		if isinstance(params, str):
-			params = json.loads(params) if params else {}
-		if isinstance(params, dict) and params.get("code_param"):
-			return str(params["code_param"])
-	except (json.JSONDecodeError, ValueError, TypeError):
-		pass
-	return DEFAULT_CODE_PARAM
-
-
-def _base_params(settings) -> dict:
-	try:
-		params = settings.get("benefits_query_params")
-		if isinstance(params, str):
-			params = json.loads(params) if params else {}
-		if isinstance(params, dict):
-			return {k: v for k, v in params.items() if k != "code_param"}
-	except (json.JSONDecodeError, ValueError, TypeError):
-		pass
-	return {}
+	base = str(settings.get("benefits_base_url") or "").strip()
+	if base:
+		return base.rstrip("/")
+	return str(P.dha_origin()).rstrip("/")
 
 
 def query_live(code: str, settings, timeout_sec: int = 20) -> dict | None:
 	"""One live BenefitsExchange query for a single intervention code.
 
-	Returns a raw payload dict or ``None`` (unreachable / no data). The raw
-	payload is normalized by the caller; nothing here decides coverage.
+	Auth is the site's DHA JWT — the same ``Authorization: Bearer`` header the
+	other DHA APIs use (``consumer_key``/``consumer_secret`` in HISI Settings).
+	Returns a raw payload dict or ``None`` (unreachable / no data / error).
+	The payload is normalized by the caller; nothing here decides coverage.
 	"""
-	if not _live_configured(settings):
-		return None
+	from hisi.api import patient as P
+
 	cache = _cache()
 	key = CACHE_KEY.format(code)
 	cached = cache.get_value(key)
 	if isinstance(cached, dict) and "payload" in cached:
 		return None if cached["payload"] is None else cached["payload"]
 
-	endpoint = str(settings.get("benefits_endpoint")).strip()
-	params = _base_params(settings)
-	params[_code_param(settings)] = code
-	headers = {"Accept": "application/json"}
-	api_key = settings.get("benefits_api_key")
-	if api_key:
-		headers["Authorization"] = f"Bearer {api_key}"
+	url = _live_base_url(settings) + BMX_INTERVENTION_PATH
+	params = {
+		"fields": '["*"]',
+		"filters": json.dumps([["intervention_code", "=", code]], separators=(",", ":")),
+	}
 	try:
-		response = requests.get(endpoint, params=params, headers=headers, timeout=(10.0, timeout_sec))
-	except requests.RequestException as exc:
+		payload = P.http_get(url, params, bearer=True)
+	except Exception as exc:  # UpstreamError / requests — logged, not fatal
 		frappe.log_error(f"BenefitsExchange {code!r} unreachable: {exc}", "BenefitsExchange")
 		return None
-	if response.status_code >= 400:
-		frappe.log_error(
-			f"BenefitsExchange {code!r} HTTP {response.status_code}: {response.text[:200]}", "BenefitsExchange"
-		)
-		return None
-	try:
-		payload = response.json()
-	except (ValueError, json.JSONDecodeError):
-		frappe.log_error(f"BenefitsExchange {code!r} returned non-JSON: {response.text[:200]}", "BenefitsExchange")
+	if not isinstance(payload, dict):
+		frappe.log_error(f"BenefitsExchange {code!r} returned no JSON object", "BenefitsExchange")
 		return None
 	cache.set_value(key, {"payload": payload, "at": int(time.time())}, expires_in=_cache_ttl_sec(settings))
 	return payload
@@ -134,11 +127,19 @@ def normalize_live_profile(code: str, payload) -> dict | None:
 	when the payload carries no usable profile — a live miss)."""
 	if not isinstance(payload, dict):
 		return None
-	# Some APIs wrap the profile ({data: {...}} / {result: {...}}).
+	# Some APIs wrap the profile: {data: {...}}, {result: {...}}, or
+	# {data: [{...}, ...]} — unwrap to the first profile object.
 	node = payload
-	for wrapper in ("data", "result", "benefit", "profile"):
-		if isinstance(node.get(wrapper), dict):
-			node = node[wrapper]
+	for _ in range(3):
+		for wrapper in ("data", "result", "benefit", "profile"):
+			inner = node.get(wrapper)
+			if isinstance(inner, dict):
+				node = inner
+				break
+			if isinstance(inner, list) and inner and isinstance(inner[0], dict):
+				node = inner[0]
+				break
+		else:
 			break
 	row = {"intervention_code": code}
 	for field, candidates in PROFILE_KEYS.items():
@@ -147,19 +148,38 @@ def normalize_live_profile(code: str, payload) -> dict | None:
 			if value not in (None, "", [], {}):
 				row[field] = value
 				break
-	preauth_required = False
-	for key in _PREAUTH_KEYS:
-		if node.get(key) in (None, ""):
-			continue
-		preauth_required = node.get(key) in (True, 1, "1", "yes", "true", "required")
-		break
-	if not preauth_required:
-		mandatory_docs = str(row.get("mandatory_documents") or "").lower()
-		preauth_required = "preauthorization" in mandatory_docs or "pre-auth" in mandatory_docs
-	row["preauth_required"] = "Yes" if preauth_required else "No"
-	if not any(str(row.get(k) or "").strip() for k in PROFILE_KEYS.values()):
+	row["preauth_required"] = _preauth_flag(node)
+	if not any(str(row.get(k) or "").strip() for k in PROFILE_KEYS):
 		return None
 	return row
+
+
+def _preauth_flag(node: dict):
+	"""``True``/``False`` when the payload carries a usable preauth flag, else
+	``None`` (unknown — the rule then does not fire for the code)."""
+	for key in _PREAUTH_KEYS:
+		if key not in node or node.get(key) in (None, ""):
+			continue
+		value = node.get(key)
+		if isinstance(value, bool):
+			return value
+		if isinstance(value, (int, float)):
+			return bool(value)
+		text = str(value).strip().lower()
+		if text in _PREAUTH_FALSE_VALUES:
+			return False
+		if text in ("1", "yes", "y", "true", "required", "preauth", "preauthorization", "prior_authorization"):
+			return True
+		return None  # unrecognized value — treat as unknown, not a guess
+	# ``authorization_type`` (e.g. "Preauthorization") is a looser signal.
+	auth_type = node.get("authorization_type") or node.get("authorization")
+	if auth_type:
+		text = str(auth_type).strip().lower()
+		if text in _PREAUTH_FALSE_VALUES:
+			return False
+		if "preauth" in text or "authorization" in text:
+			return True
+	return None
 
 
 def static_profiles(codes: list) -> dict:
@@ -180,6 +200,7 @@ def static_profiles(codes: list) -> dict:
 				"facility_range",
 				"payment_mechanism",
 				"frequency",
+				"preauth_required",
 				"mandatory_documents",
 				"mandatory_investigations",
 			],
@@ -201,24 +222,22 @@ def get_benefits_profiles(codes: list, settings=None) -> tuple:
 	codes = [str(c).strip() for c in codes if str(c).strip()]
 	if not codes:
 		return {}, "none", []
-	static = static_profiles(codes) if settings.benefits_mode == "static" else {}
+	static = static_profiles(codes)  # always: seed + per-code live fallback
 	profiles = dict(static)
 	warnings: list = []
 	live_hits = 0
-	if settings.benefits_mode == "live" and _live_configured(settings):
+	if settings.benefits_mode == "live":
 		for code in codes[:100]:
 			payload = query_live(code, settings)
 			if payload is None:
-				continue
+				continue  # keep the static row (or nothing) for the code
 			row = normalize_live_profile(code, payload)
 			if row:
 				profiles[code] = row
 				live_hits += 1
-			elif code not in static:
-				warnings.append(f"benefits_exchange: live query for {code!r} returned no usable profile")
+			else:
+				warnings.append(f"benefits_exchange: live query for {code!r} returned no usable profile — static row kept")
 		if live_hits == 0:
 			warnings.append("benefits_exchange: no live results — all codes fell back to the static matrix")
-	elif settings.benefits_mode == "live" and not _live_configured(settings):
-		warnings.append("benefits_exchange: benefits_mode=live but no endpoint configured — static matrix used")
 	source = "live" if live_hits else ("static" if profiles else "none")
 	return profiles, source, warnings

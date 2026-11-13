@@ -454,7 +454,20 @@ class TestSeed(IntegrationTestCase):
 
 
 class TestWorkerFailClosed(IntegrationTestCase):
+	def setUp(self):
+		super().setUp()
+		# The worker commits mid-run, which would commit away the per-test
+		# rollback and leak test-state changes (e.g. a cleared single) onto
+		# the live site. Neutralize the commit for this class so the
+		# framework's per-test rollback owns every change again.
+		self._commit_patch = patch.object(worker.frappe.db, "commit", lambda *args, **kwargs: None)
+		self._commit_patch.start()
+		# Test isolation: these cases verify the legacy LLM path regardless of
+		# the site's configured default.
+		frappe.get_doc({"doctype": "HISI Report Settings", "default_ai_mode": "legacy_llm"}).save()
+
 	def tearDown(self):
+		self._commit_patch.stop()
 		_clear_ai_single()
 		super().tearDown()
 

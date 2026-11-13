@@ -236,6 +236,7 @@ def _load_registry(codes: list) -> dict:
 				"facility_range",
 				"payment_mechanism",
 				"frequency",
+				"preauth_required",
 				"mandatory_documents",
 				"mandatory_investigations",
 			],

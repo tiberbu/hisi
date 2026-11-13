@@ -143,20 +143,39 @@ class TestAmountMismatch(unittest.TestCase):
 
 
 class TestMissingPreauth(unittest.TestCase):
-	def test_surgical_code_without_preauth(self):
-		out = ev.eval_missing_preauth(_ctx(claims=[_claim(interventions_code=["SHA-19-001"])]), {})
+	def test_flagged_code_without_preauth(self):
+		ctx = _ctx(claims=[_claim(interventions_code=["SHA-19-001"])])
+		ctx.registry = {"SHA-19-001": {"intervention_code": "SHA-19-001", "intervention_name": "Surgery", "preauth_required": 1}}
+		out = ev.eval_missing_preauth(ctx, {})
 		self.assertEqual(len(out), 1)
 
-	def test_surgical_code_with_preauth(self):
-		out = ev.eval_missing_preauth(
-			_ctx(claims=[_claim(interventions_code=["SHA-19-001"])], preauths=[_claim(name="PRE-1", interventions_code=["SHA-19-001"])]),
-			{},
+	def test_flagged_code_with_preauth(self):
+		ctx = _ctx(
+			claims=[_claim(interventions_code=["SHA-19-001"])],
+			preauths=[_claim(name="PRE-1", interventions_code=["SHA-19-001"])],
 		)
+		ctx.registry = {"SHA-19-001": {"intervention_code": "SHA-19-001", "intervention_name": "Surgery", "preauth_required": 1}}
+		out = ev.eval_missing_preauth(ctx, {})
 		self.assertEqual(out, [])
 
-	def test_non_surgical_code_without_registry_passes(self):
+	def test_unflagged_code_passes_even_if_sha19(self):
+		# Not every intervention requires preauth: an explicit flag of 0 means
+		# the check stays silent even for SHA-19 family codes.
+		ctx = _ctx(claims=[_claim(interventions_code=["SHA-19-002"])])
+		ctx.registry = {"SHA-19-002": {"intervention_code": "SHA-19-002", "intervention_name": "Surgery", "preauth_required": 0}}
+		out = ev.eval_missing_preauth(ctx, {})
+		self.assertEqual(out, [])
+
+	def test_unknown_flag_passes(self):
+		# No registry/live profile for the code → requirement unknown → silent.
 		out = ev.eval_missing_preauth(_ctx(claims=[_claim(interventions_code=["SHA-12-001"])]), {})
 		self.assertEqual(out, [])
+
+	def test_live_yes_string_flag(self):
+		ctx = _ctx(claims=[_claim(interventions_code=["SHA-16-007"])])
+		ctx.registry = {"SHA-16-007": {"intervention_code": "SHA-16-007", "intervention_name": "Hemodialysis", "preauth_required": True}}
+		out = ev.eval_missing_preauth(ctx, {})
+		self.assertEqual(len(out), 1)
 
 
 class TestDuplicateClaim(unittest.TestCase):
@@ -400,6 +419,51 @@ class TestRunRulesEndToEnd(unittest.TestCase):
 		self.assertTrue(all(p["verified"] for p in out["provenance"]))
 		self.assertTrue(result["summary"])
 		self.assertTrue(result["executive_summary"])
+
+
+class TestBenefitsExchangeNormalizer(unittest.TestCase):
+	"""The live BMX payload → registry-row normalizer (tolerant key matching,
+	authoritative preauth flag)."""
+
+	def _norm(self, payload):
+		from hisi.api.ai.benefits_exchange import normalize_live_profile
+
+		return normalize_live_profile("SHA-12-001", payload)
+
+	def test_flat_payload_with_cap_and_preauth_true(self):
+		row = self._norm(
+			{
+				"intervention_code": "SHA-12-001",
+				"intervention_name": "Laboratory tests",
+				"sub_benefit": "Outpatient",
+				"cap": 500,
+				"payment_mechanism": "FFS",
+				"preauth_required": True,
+			}
+		)
+		self.assertEqual(row["tariff"], 500)
+		self.assertIs(row["preauth_required"], True)
+
+	def test_wrapped_data_list(self):
+		row = self._norm({"success": True, "data": [{"intervention_name": "CT scan", "amount": 6900, "authorization_required": "no"}]})
+		self.assertEqual(row["intervention_name"], "CT scan")
+		self.assertEqual(row["tariff"], 6900)
+		self.assertIs(row["preauth_required"], False)
+
+	def test_preauth_string_variants(self):
+		from hisi.api.ai.benefits_exchange import normalize_live_profile
+
+		for value, expected in (("Yes", True), ("1", True), ("Yes, prior authorization", None), ("N/A", False)):
+			row = normalize_live_profile("X-1-1", {"intervention_name": "n", "preauth_required": value})
+			self.assertIs(row["preauth_required"], expected, f"{value!r} -> {row['preauth_required']}")
+
+	def test_preauth_via_authorization_type(self):
+		row = self._norm({"intervention_name": "Cath", "authorization_type": "Preauthorization"})
+		self.assertIs(row["preauth_required"], True)
+
+	def test_empty_payload_is_a_miss(self):
+		self.assertIsNone(self._norm({"data": []}))
+		self.assertIsNone(self._norm("not a dict"))
 
 
 if __name__ == "main":

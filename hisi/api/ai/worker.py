@@ -246,7 +246,7 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	if mode in ("deterministic_plus_narrative", "autonomous_full"):
 		data_context = build_data_context(cr_id, sources, results, errors, int(settings.discrepancy_max_records))
 		redacted = redact_context_for_llm(data_context, redaction_policy(report_settings))
-		stage = run_narrative_stage(report_settings, settings, cr_id, redacted, result)
+		stage = run_narrative_stage(report_settings, settings, cr_id, redacted, result, mode=mode)
 		warnings.extend(stage["warnings"])
 		if stage.get("model"):
 			models_used.append(str(stage["model"]))

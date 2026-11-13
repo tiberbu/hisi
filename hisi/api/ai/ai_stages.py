@@ -137,13 +137,17 @@ def run_narrative_stage(
 	cr_id: str,
 	redacted_context: dict,
 	result: dict,
+	mode: str = "",
 ) -> dict:
 	"""The optional narrative stage. Returns
 	``{"result": dict|None, "model": str|None, "usage": dict|None,
 	"warnings": list}`` — ``result`` is ``None`` when the stage was skipped
-	or failed (the caller keeps the deterministic summary)."""
+	or failed (the caller keeps the deterministic summary).
+
+	``mode`` is the resolved mode of the run (the site default is only a
+	fallback for direct callers)."""
 	warnings: list = []
-	mode = str(report_settings.get("default_ai_mode") or "")
+	mode = str(mode or report_settings.get("default_ai_mode") or "")
 	# The stage runs for the AI modes that use narrative (the worker already
 	# dispatches; this guard keeps the module safe to call directly).
 	if mode in ("deterministic_only", "legacy_llm"):
@@ -154,8 +158,7 @@ def run_narrative_stage(
 		return {
 			"result": None,
 			"model": None,
-			"usage": None
-			| None,
+			"usage": None,
 			"warnings": ["narrative stage skipped: llm_base_url not configured (deterministic summary used)"],
 		}
 	prompt = build_narrative_prompt(cr_id, redacted_context, result)

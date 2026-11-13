@@ -17,6 +17,7 @@
   "access_path",
   "frequency",
   "pomf_limit",
+  "preauth_required",
   "mandatory_documents",
   "mandatory_investigations",
   "optional_documents",
@@ -88,6 +89,13 @@
    "fieldname": "pomf_limit",
    "fieldtype": "Small Text",
    "label": "POMF Limit"
+  },
+  {
+   "default": "0",
+   "description": "Whether a preauthorization record is required before this intervention can be claimed. Driven by the BenefitsExchange matrix; the MISSING_PREAUTH rule only fires for interventions flagged here (live API value wins over this row).",
+   "fieldname": "preauth_required",
+   "fieldtype": "Check",
+   "label": "Preauthorization Required"
   },
   {
    "fieldname": "mandatory_documents",
