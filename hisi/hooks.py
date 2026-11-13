@@ -166,8 +166,16 @@ app_license = "mit"
 scheduler_events = {
 	"daily": [
 		"hisi.api.surveillance.session.backfill_expired_sessions",
-		"hisi.api.ai.worker.sweep_stuck_reports",
 	],
+	"cron": {
+		# Every 30 minutes (was daily): a deploy/restart that kills the worker
+		# mid-run orphans the job in Processing/Queued — a 30-minute sweep
+		# bounds how long a dead run can masquerade as live (the per-scope
+		# dedupe and the UI retry both key off terminal states).
+		"*/30 * * * *": [
+			"hisi.api.ai.worker.sweep_stuck_reports",
+		],
+	},
 }
 
 # Patches

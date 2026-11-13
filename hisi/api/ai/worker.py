@@ -24,7 +24,7 @@ Fail-closed: an unconfigured LLM host fails the job immediately with
 ``LLM_NOT_CONFIGURED``; a run in which every data source errored fails with
 ``DATA_UNAVAILABLE`` before any LLM spend.
 
-The daily ``sweep_stuck_reports`` (registered in ``hooks.scheduler_events``)
+The 30-minute ``sweep_stuck_reports`` (registered in ``hooks.scheduler_events``)
 marks ``Processing`` reports older than 2 x total_timeout as ``Failed`` /
 ``WORKER_CRASHED`` and ``Queued`` reports older than 4 x total_timeout as
 ``Failed`` / ``WORKER_LOST`` — a crashed or job-losing worker is detectable
@@ -36,7 +36,7 @@ import json
 import time
 
 import frappe
-from frappe.utils import add_to_date, now_datetime
+from frappe.utils import add_to_date, get_datetime, now_datetime
 
 from hisi.api.ai import llm_client, report_pdf
 from hisi.api.ai.benefits_exchange import get_benefits_profiles
@@ -85,6 +85,35 @@ _STUCK_MULTIPLIER = 2
 #: is bounded by total_timeout_sec) — beyond that, the enqueued job was never
 #: claimed (worker died pre-claim, or the job was lost from the queue).
 _QUEUED_STUCK_MULTIPLIER = 2 * _STUCK_MULTIPLIER
+
+
+def is_stale_running_row(status, started_at=None, creation=None, modified=None) -> bool:
+	"""AD-4 companion predicate: is a ``Queued``/``Processing`` row already
+	old enough that the sweep would declare it crashed?
+
+	The sweep (30-minute cadence) is the background authority, but the API
+	does not want to make a user wait for the next sweep: retry and the
+	per-scope dedupe both need the same "this run is dead, not live"
+	verdict *now*. The thresholds mirror ``sweep_stuck_reports`` exactly
+	(2x ``llm_total_timeout_sec`` for ``Processing``, 4x for ``Queued``)
+	so the three surfaces never disagree about what "stuck" means.
+
+	Returns ``False`` for any other status (Success/Failed are terminal).
+	"""
+	if status not in ("Processing", "Queued"):
+		return False
+	settings = get_ai_settings()
+	now = now_datetime()
+	if status == "Processing":
+		ts = started_at or modified
+		if ts is None:
+			return False
+		threshold_sec = _STUCK_MULTIPLIER * int(settings.llm_total_timeout_sec)
+		return (now - get_datetime(ts)).total_seconds() > threshold_sec
+	if creation is None:
+		return False
+	threshold_sec = _QUEUED_STUCK_MULTIPLIER * int(settings.llm_total_timeout_sec)
+	return (now - get_datetime(creation)).total_seconds() > threshold_sec
 
 
 class _WorkerFailure(Exception):
@@ -476,7 +505,7 @@ def sweep_stuck_reports() -> int:
 				"code": "WORKER_CRASHED",
 				"message": (
 					f"report stuck in Processing for more than 2 x total_timeout_sec "
-					f"({threshold_sec}s) without a terminal state; worker presumed crashed (daily sweep)"
+					f"({threshold_sec}s) without a terminal state; worker presumed crashed (30-min sweep)"
 				),
 			}
 		)
@@ -498,7 +527,7 @@ def sweep_stuck_reports() -> int:
 				"code": "WORKER_LOST",
 				"message": (
 					f"report sat in Queued for more than {_QUEUED_STUCK_MULTIPLIER} x total_timeout_sec "
-					f"({queued_threshold}s) without a worker claim; the enqueued job was lost (daily sweep)"
+					f"({queued_threshold}s) without a worker claim; the enqueued job was lost (30-min sweep)"
 				),
 			}
 		)
