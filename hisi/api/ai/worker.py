@@ -24,7 +24,7 @@ Fail-closed: an unconfigured LLM host fails the job immediately with
 ``LLM_NOT_CONFIGURED``; a run in which every data source errored fails with
 ``DATA_UNAVAILABLE`` before any LLM spend.
 
-The daily ``sweep_stuck_reports`` (registered in ``hooks.scheduler_events``)
+The 30-minute ``sweep_stuck_reports`` (registered in ``hooks.scheduler_events``)
 marks ``Processing`` reports older than 2 x total_timeout as ``Failed`` /
 ``WORKER_CRASHED`` and ``Queued`` reports older than 4 x total_timeout as
 ``Failed`` / ``WORKER_LOST`` — a crashed or job-losing worker is detectable
@@ -476,7 +476,7 @@ def sweep_stuck_reports() -> int:
 				"code": "WORKER_CRASHED",
 				"message": (
 					f"report stuck in Processing for more than 2 x total_timeout_sec "
-					f"({threshold_sec}s) without a terminal state; worker presumed crashed (daily sweep)"
+					f"({threshold_sec}s) without a terminal state; worker presumed crashed (30-min sweep)"
 				),
 			}
 		)
@@ -498,7 +498,7 @@ def sweep_stuck_reports() -> int:
 				"code": "WORKER_LOST",
 				"message": (
 					f"report sat in Queued for more than {_QUEUED_STUCK_MULTIPLIER} x total_timeout_sec "
-					f"({queued_threshold}s) without a worker claim; the enqueued job was lost (daily sweep)"
+					f"({queued_threshold}s) without a worker claim; the enqueued job was lost (30-min sweep)"
 				),
 			}
 		)
