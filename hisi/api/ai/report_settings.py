@@ -35,7 +35,6 @@ DEFAULTS = {
 	"severity_overrides": None,
 	"benefits_mode": "static",
 	"benefits_cache_ttl": 1440,
-	"benefits_base_url": None,
 }
 
 _VALID_MODES = ("deterministic_only", "deterministic_plus_narrative", "autonomous_full", "legacy_llm")

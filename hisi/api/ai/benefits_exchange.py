@@ -89,13 +89,16 @@ def _cache_ttl_sec(settings) -> int:
 		return 1440 * 60
 
 
-def _live_base_url(settings) -> str:
-	"""The BMX host: the configured ``benefits_base_url``, else the site's
-	DHA origin (the production base, or the simulation host when UAT
-	simulation is on)."""
+def _live_base_url(settings=None) -> str:
+	"""The BMX host: the ``benefits_base_url`` override in HISI Settings
+	when set, else the site's shared DHA origin — production ``base_url``,
+	or the simulation host while UAT simulation is on. The same base-URL
+	mechanism as every other DHA call; the report-settings argument is
+	retained for call-site compatibility only."""
 	from hisi.api import patient as P
 
-	base = str(settings.get("benefits_base_url") or "").strip()
+	s = P.settings_doc()
+	base = str(s.get("benefits_base_url") or "").strip()
 	if base:
 		return base.rstrip("/")
 	return str(P.dha_origin()).rstrip("/")
