@@ -648,6 +648,27 @@ class TestGenerateApi(IntegrationTestCase):
 		self.assertNotEqual(resp["data"]["report"], existing.name)
 		self.assertEqual(frappe.db.count(REPORT, {"subject_cr_id": "CRFAILED"}), 2)
 
+	def test_generate_skips_stale_processing_zombie(self):
+		# Zombie: the worker died mid-run (e.g. a deploy) and the sweep has
+		# not marked it failed yet — the dedupe must not hand a dead job
+		# back (the surface would sit on "Working…" forever); a fresh run is
+		# created instead.
+		existing = _make_report(cr_id="CRSTALEZ")
+		ts = add_to_date(now_datetime(), days=-1)
+		frappe.db.set_value(REPORT, existing.name, "status", "Processing")
+		frappe.db.set_value(REPORT, existing.name, "creation", ts)
+		frappe.db.set_value(REPORT, existing.name, "modified", ts)
+		frappe.db.set_value(REPORT, existing.name, "started_at", ts)
+		ensure_default_tags()
+		with patch.object(frappe, "enqueue") as mock_enqueue:
+			ai_api.generate_discrepancy_report(data={"cr_id": "CRSTALEZ"})
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 202)
+		self.assertNotIn("existing", resp["data"])
+		self.assertNotEqual(resp["data"]["report"], existing.name)
+		self.assertEqual(frappe.db.count(REPORT, {"subject_cr_id": "CRSTALEZ"}), 2)
+		mock_enqueue.assert_called_once()
+
 	def test_generate_requires_cr_id(self):
 		ai_api.generate_discrepancy_report(data={"tag_codes": []})
 		self.assertEqual(frappe.local.response["http_status_code"], 400)
@@ -770,6 +791,31 @@ class TestRetryApi(IntegrationTestCase):
 		ai_api.retry_discrepancy_report(name="HIS-DRP-2026-0999")
 		self.assertEqual(frappe.local.response["http_status_code"], 404)
 
+	def _stale_processing(self, cr_id: str) -> str:
+		doc = _make_report(cr_id=cr_id)
+		ts = add_to_date(now_datetime(), days=-1)
+		frappe.db.set_value(REPORT, doc.name, "status", "Processing")
+		frappe.db.set_value(REPORT, doc.name, "creation", ts)
+		frappe.db.set_value(REPORT, doc.name, "modified", ts)
+		frappe.db.set_value(REPORT, doc.name, "started_at", ts)
+		return doc.name
+
+	def test_retry_stale_processing_resets_and_enqueues(self):
+		# Worker died mid-run (e.g. a deploy killed it): the run is past the
+		# sweep's stuck threshold — retry must recover it immediately, not
+		# make the user wait for the next sweep tick.
+		name = self._stale_processing("CRRETRYSTALE")
+		with patch.object(frappe, "enqueue") as mock_enqueue:
+			ai_api.retry_discrepancy_report(name=name)
+		resp = frappe.local.response
+		self.assertEqual(resp["http_status_code"], 202)
+		self.assertEqual(resp["data"], {"report": name, "status": "queued"})
+		mock_enqueue.assert_called_once()
+		row = frappe.db.get_value(REPORT, name, ["status", "error", "finished_at"], as_dict=True, cache=False)
+		self.assertEqual(row["status"], "Queued")
+		self.assertIsNone(row["error"])
+		self.assertIsNone(row["finished_at"])
+
 
 class TestSweepStuckReports(IntegrationTestCase):
 	"""The daily sweep fails the pre-terminal states the worker lifecycle can
@@ -827,3 +873,17 @@ class TestSweepStuckReports(IntegrationTestCase):
 		row2 = _terminal(doc.name)
 		self.assertEqual(row2["error"], first_error)
 		self.assertEqual(frappe.db.get_value(REPORT, doc.name, "finished_at", cache=False), first_finished)
+
+	def test_get_report_flags_stale_processing(self):
+		# The UI's stall state is driven by the server: a pre-terminal row
+		# past the sweep threshold carries stalled=true, fresh rows false.
+		doc = _make_report(cr_id="CRSTALEGET")
+		self._stale(doc, "Processing")
+		frappe.local.response = frappe._dict()
+		ai_api.get_discrepancy_report(name=doc.name)
+		self.assertEqual(frappe.local.response["data"]["status"], "Processing")
+		self.assertTrue(frappe.local.response["data"]["stalled"])
+		fresh = _make_report(cr_id="CRFRESHGET")
+		frappe.local.response = frappe._dict()
+		ai_api.get_discrepancy_report(name=fresh.name)
+		self.assertFalse(frappe.local.response["data"]["stalled"])

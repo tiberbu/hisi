@@ -35,6 +35,7 @@ from hisi.api.ai.prompt import DEFAULT_SYSTEM_PROMPT, build_data_context, effect
 from hisi.api.ai.rules.engine import AI_MODES  # noqa: F401  (re-exported for API consumers)
 from hisi.api.ai.seed import ensure_claim_status_config, ensure_default_tags
 from hisi.api.ai.settings import get_ai_settings
+from hisi.api.ai.worker import is_stale_running_row
 from hisi.api.patient import (
 	fetch_patient_contributions,
 	step_claims,
@@ -125,7 +126,7 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 		candidates = frappe.get_all(
 			REPORT,
 			filters={"subject_cr_id": cr_id, "status": ["in", ["Queued", "Processing", "Success"]]},
-			fields=["name", "status", "subject_claim", "subject_visit", "subject_preauth"],
+			fields=["name", "status", "subject_claim", "subject_visit", "subject_preauth", "started_at", "modified", "creation"],
 			order_by="creation desc",
 			limit=5,
 		)
@@ -136,6 +137,17 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 				str(row.get("subject_visit") or "").strip(),
 				str(row.get("subject_preauth") or "").strip(),
 			) == scope:
+				if is_stale_running_row(
+					row.get("status"),
+					started_at=row.get("started_at"),
+					creation=row.get("creation"),
+					modified=row.get("modified"),
+				):
+					# Zombie: the worker died mid-run (e.g. a deploy) and the
+					# sweep has not marked it failed yet. Handing a dead job
+					# back would leave the surface on "Working…" forever —
+					# skip it and create a fresh run below.
+					continue
 				return APIResponse.success(data={"report": row.name, "status": row.status, "existing": True}, status=200)
 	ensure_default_tags()
 	ensure_claim_status_config()
@@ -194,9 +206,11 @@ def retry_discrepancy_report(name: str) -> None:
 	A ``Failed`` job is reset to ``Queued`` (one guarded UPDATE — the error
 	and finished_at are cleared) and the worker is enqueued again; a stuck
 	``Queued`` job is simply re-enqueued (the worker's atomic claim keeps a
-	double enqueue harmless: the loser skips with "not claimable"). A
-	``Processing`` job is refused 409 — it may still be live (the daily
-	sweep marks crashed runs failed, after which a retry is possible); a
+	double enqueue harmless: the loser skips with "not claimable"). A live
+	``Processing`` job is refused 409 — it may still be running; a *stale*
+	one (past the sweep's stuck threshold, i.e. the worker died) takes the
+	same guarded-reset path as a failed one, so a deploy-killed run is
+	retryable immediately instead of waiting for the next sweep; a
 	``Success`` job 409s too — generate with ``force`` for a fresh run.
 	"""
 	name = str(name or "").strip()
@@ -208,12 +222,17 @@ def retry_discrepancy_report(name: str) -> None:
 		raise NotFound(f"Discrepancy report {name!r} not found.")
 	if doc.status == "Success":
 		raise Conflict(f"{name!r} already completed — generate with force to run it again.")
-	if doc.status == "Processing":
-		raise Conflict(f"{name!r} is still running (a crashed run is marked failed by the daily sweep, then retryable).")
-	if doc.status == "Failed":
+	if doc.status == "Processing" and not is_stale_running_row(
+		doc.status, started_at=doc.started_at, creation=doc.creation, modified=doc.modified
+	):
+		raise Conflict(f"{name!r} is still running (a crashed run is marked failed by the 30-minute sweep, then retryable).")
+	if doc.status in ("Failed", "Processing"):
+		# Failed: the normal re-run. Stale ``Processing`` (worker died mid-run —
+		# e.g. a deploy): the sweep would mark it failed; taking the same guarded
+		# reset path recovers it without waiting for the next sweep.
 		affected = frappe.db.execute_query(
 			"UPDATE `tabHISI Discrepancy Report` SET status = %s, error = NULL, finished_at = NULL WHERE name = %s AND status = %s",
-			("Queued", name, "Failed"),
+			("Queued", name, doc.status),
 		)
 		if not affected:
 			raise Conflict(f"{name!r} changed state before the retry; reload and try again.")
@@ -263,6 +282,15 @@ def get_discrepancy_report(name: str) -> None:
 		"duration_ms": doc.duration_ms,
 		"data_as_of": str(doc.data_as_of) if doc.data_as_of else None,
 		"coverage": json.loads(doc.coverage) if doc.coverage else None,
+		# Pre-terminal jobs only: the server-side verdict that this run is a
+		# zombie (worker lost, e.g. during a deploy) — the surfaces swap the
+		# infinite spinner for a retryable error state instead of polling a
+		# job that will never settle on its own.
+		"stalled": is_stale_running_row(
+			doc.status, started_at=doc.started_at, creation=doc.creation, modified=doc.modified
+		)
+		if doc.status in ("Queued", "Processing")
+		else False,
 	}
 	if doc.status == "Success":
 		payload["report"] = doc.report
