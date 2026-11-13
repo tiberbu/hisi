@@ -1,0 +1,165 @@
+{
+ "actions": [],
+ "creation": "2026-11-13 06:10:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "default_ai_mode",
+  "allow_per_run_mode",
+  "column_break_1",
+  "clinical_model",
+  "general_model",
+  "stage_model_routing",
+  "max_input_tokens",
+  "max_llm_calls",
+  "section_break_2",
+  "redaction_policy",
+  "evidence_policy",
+  "severity_overrides",
+  "section_break_3",
+  "benefits_mode",
+  "benefits_cache_ttl",
+  "column_break_4",
+  "benefits_base_url"
+ ],
+ "fields": [
+  {
+   "default": "legacy_llm",
+   "description": "The pipeline stage mix for reports: deterministic_only (rules only, no LLM), deterministic_plus_narrative (rules + an LLM executive summary), autonomous_full (rules + AI investigation, Phase D), legacy_llm (the pre-v2 single-call behaviour, kept for A/B).",
+   "fieldname": "default_ai_mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Default AI Mode",
+   "options": "deterministic_only\ndeterministic_plus_narrative\nautonomous_full\nlegacy_llm"
+  },
+  {
+   "default": "0",
+   "description": "When set, the ai_mode passed to generate_discrepancy_report is honoured per run; otherwise the job always uses the Default AI Mode.",
+   "fieldname": "allow_per_run_mode",
+   "fieldtype": "Check",
+   "label": "Allow Per-Run AI Mode"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "baichuan-m2-32b",
+   "description": "Model routed for clinical stages (document reading, clinical narrative, benefit explanation).",
+   "fieldname": "clinical_model",
+   "fieldtype": "Data",
+   "label": "Clinical Model"
+  },
+  {
+   "default": "qwen3-27b",
+   "description": "Model routed for general stages (executive summary, generic explanation).",
+   "fieldname": "general_model",
+   "fieldtype": "Data",
+   "label": "General Model"
+  },
+  {
+   "description": "Optional JSON map of stage -> model override, e.g. {\"narrative\": \"qwen3-27b\", \"investigator\": \"baichuan-m2-32b\"}. Stages not listed use the clinical/general default for their class.",
+   "fieldname": "stage_model_routing",
+   "fieldtype": "Small Text",
+   "label": "Stage Model Routing (JSON)"
+  },
+  {
+   "default": "24000",
+   "description": "Pre-flight input token budget per LLM call (estimate vs the redacted digest); over budget the AI stage is skipped with a stored warning and the report still renders.",
+   "fieldname": "max_input_tokens",
+   "fieldtype": "Int",
+   "label": "Max Input Tokens (per call)"
+  },
+  {
+   "default": "2",
+   "description": "Maximum LLM calls per AI stage (the initial call + one corrective retry).",
+   "fieldname": "max_llm_calls",
+   "fieldtype": "Int",
+   "label": "Max LLM Calls (per stage)"
+  },
+  {
+   "fieldname": "section_break_2",
+   "fieldtype": "Section Break"
+  },
+  {
+   "description": "JSON toggles for the PII redaction layer applied to anything sent to an LLM: {\"phone\": true, \"cr_id\": true, \"id_numbers\": true, \"dob\": true, \"names\": true, \"email\": true}.",
+   "fieldname": "redaction_policy",
+   "fieldtype": "Small Text",
+   "label": "Redaction Policy (JSON)"
+  },
+  {
+   "default": "exclude",
+   "description": "What happens to a finding whose evidence refs fail verification: exclude (drop it from the deliverable; it stays in the provenance audit) or mark (keep it, stamped unverified).",
+   "fieldname": "evidence_policy",
+   "fieldtype": "Select",
+   "label": "Evidence Policy",
+   "options": "exclude\nmark"
+  },
+  {
+   "description": "Optional JSON map of tag code -> severity used by the policy_table severity policy, e.g. {\"CONTRIBUTION_GAP\": \"high\"}.",
+   "fieldname": "severity_overrides",
+   "fieldtype": "Small Text",
+   "label": "Severity Overrides (JSON)"
+  },
+  {
+   "fieldname": "section_break_3",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "static",
+   "description": "static: the HISI Benefit Intervention matrix (deterministic, seeded from the SHA matrices). live: the BenefitsExchange endpoint is authoritative per intervention code (falls back to static when the call fails; the source is stamped on every job).",
+   "fieldname": "benefits_mode",
+   "fieldtype": "Select",
+   "label": "Benefits Mode",
+   "options": "static\nlive"
+  },
+  {
+   "default": "1440",
+   "description": "Cache TTL in minutes for live BenefitsExchange results, keyed by intervention code (the API is a pure function of the code).",
+   "fieldname": "benefits_cache_ttl",
+   "fieldtype": "Int",
+   "label": "Benefits Cache TTL (minutes)"
+  },
+  {
+   "fieldname": "column_break_4",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Base URL host for the BenefitsExchange (BMX) Intervention resource, e.g. https://uat.dha.go.ke. Empty falls back to the site DHA origin (HISI Settings base_url / simulation host). Auth is the site DHA JWT (consumer_key/consumer_secret), same as the other DHA APIs.",
+   "fieldname": "benefits_base_url",
+   "fieldtype": "Data",
+   "label": "Benefits Base URL",
+   "options": "URL"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 0,
+ "issingle": 1,
+ "modified": "2026-11-13 06:10:00.000000",
+ "modified_by": "Administrator",
+ "module": "Hisi",
+ "name": "HISI Report Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Insurance Provider",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -10,6 +10,12 @@
   "label",
   "severity",
   "enabled",
+  "column_break_rule",
+  "rule_type",
+  "rule_key",
+  "severity_policy",
+  "parameters",
+  "version",
   "instruction"
  ],
  "fields": [
@@ -44,7 +50,47 @@
    "label": "Enabled"
   },
   {
-   "description": "The instruction given to the LLM for this check: what to look for in the data and what counts as a discrepancy.",
+   "fieldname": "column_break_rule",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "code",
+   "description": "How this check runs: code (a deterministic evaluator from the rule engine), llm (the model decides — legacy behaviour), off (never runs).",
+   "fieldname": "rule_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Rule Type",
+   "options": "code\nllm\noff"
+  },
+  {
+   "description": "The deterministic evaluator key (dotted name) — defaults to the tag code lower-cased. Must match a registered evaluator (or the check is skipped with a warning).",
+   "fieldname": "rule_key",
+   "fieldtype": "Data",
+   "label": "Rule Key"
+  },
+  {
+   "default": "fixed",
+   "description": "fixed: the tag's Severity field decides; computed: the evaluator's own severity; policy_table: the HISI Report Settings severity overrides map (falling back to the tag's severity).",
+   "fieldname": "severity_policy",
+   "fieldtype": "Select",
+   "label": "Severity Policy",
+   "options": "fixed\ncomputed\npolicy_table"
+  },
+  {
+   "description": "Optional JSON parameters for the evaluator (e.g. {\"tolerance_pct\": 5, \"max_gap_months\": 3}).",
+   "fieldname": "parameters",
+   "fieldtype": "Small Text",
+   "label": "Parameters (JSON)"
+  },
+  {
+   "default": "1",
+   "description": "Bumped on every rule change; stamped on reports for reproducibility.",
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "label": "Version"
+  },
+  {
+   "description": "The instruction given to the LLM for this check (legacy modes): what to look for in the data and what counts as a discrepancy.",
    "fieldname": "instruction",
    "fieldtype": "Long Text",
    "label": "Instruction"

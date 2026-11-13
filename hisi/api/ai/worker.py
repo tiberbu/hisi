@@ -31,6 +31,7 @@ marks ``Processing`` reports older than 2 x total_timeout as ``Failed`` /
 instead of leaving a report stuck in a pre-terminal state.
 """
 
+import hashlib
 import json
 import time
 
@@ -38,6 +39,7 @@ import frappe
 from frappe.utils import add_to_date, now_datetime
 
 from hisi.api.ai import llm_client, report_pdf
+from hisi.api.ai.benefits_exchange import get_benefits_profiles
 from hisi.api.ai.benefits_registry import matched_benefits_lines
 from hisi.api.ai.prompt import (
 	CORRECTIVE_MESSAGE,
@@ -47,6 +49,15 @@ from hisi.api.ai.prompt import (
 	parse_llm_json,
 	render_report_markdown,
 )
+from hisi.api.ai.report_settings import (
+	get_report_settings,
+	redaction_policy,
+	resolve_ai_mode,
+)
+from hisi.api.ai.rules import RuleContext, run_rules
+from hisi.api.ai.rules.engine import CATALOG_VERSION
+from hisi.api.ai.rules.redact import redact_context_for_llm
+from hisi.api.ai.ai_stages import run_narrative_stage
 from hisi.api.ai.settings import get_ai_data_sources, get_ai_settings
 from hisi.api.patient import (
 	fetch_patient_contributions,
@@ -112,101 +123,267 @@ def run_discrepancy_report(report_name: str) -> None:
 		if not results:
 			detail = "; ".join(f"{key}: {value}" for key, value in errors.items())
 			raise _WorkerFailure("DATA_UNAVAILABLE", f"every data source errored: {detail}")
-		context = build_data_context(
-			str(doc.subject_cr_id or ""), sources, results, errors, int(settings.discrepancy_max_records)
-		)
 		tags = _declared_tags(doc)
-		# Code-driven injection: registry rows for the intervention/document
-		# codes actually present in the data (empty string when none match).
-		detail = matched_benefits_lines(
-			json.dumps(context, indent=2, ensure_ascii=False, default=str)
-		)
-		prompt = build_report_prompt(
-			settings.discrepancy_system_prompt,
-			context,
-			tags,
-			benefits_reference=settings.benefits_reference,
-			benefits_detail=detail,
-		)
-
-		# Pin the generation-time state. Each db_set persists its single field
-		# directly (targeted UPDATE) — deliberately NO doc.db_update() here:
-		# the in-memory doc still carries the pre-claim status, and a full
-		# rewrite would clobber the atomic claim's Processing state.
-		doc.db_set("prompt_snapshot", prompt, update_modified=False)
-		doc.db_set("data_sources", ",".join(sources), update_modified=False)
-		patient_result = results.get("patient")
-		if isinstance(patient_result, dict) and str(patient_result.get("name") or "").strip():
-			doc.db_set("subject_name", str(patient_result.get("name")).strip(), update_modified=False)
-
-		messages = [{"role": "user", "content": prompt}]
-		try:
-			raw, usage = _call_llm(settings, messages)
-		except llm_client.LLMError:
-			# exactly ONE transport retry
-			try:
-				raw, usage = _call_llm(settings, messages)
-			except llm_client.LLMError as exc:
-				raise _WorkerFailure(_llm_error_code(exc), _llm_error_message(exc)) from exc
-		result = parse_llm_json(raw)
-		if result is None:
-			# exactly ONE corrective JSON retry
-			corrective = messages + [
-				{"role": "assistant", "content": raw or ""},
-				{"role": "user", "content": CORRECTIVE_MESSAGE},
-			]
-			try:
-				raw, usage = _call_llm(settings, corrective)
-			except llm_client.LLMError as exc:
-				raise _WorkerFailure(_llm_error_code(exc), _llm_error_message(exc)) from exc
-			result = parse_llm_json(raw)
-			if result is None:
-				_mark_failed(
-					report_name,
-					"LLM_PARSE_FAILED",
-					"the LLM reply was not valid contract JSON after one corrective retry",
-					duration_ms(),
-					raw_response=raw,
-					usage=usage,
-				)
-				return
-
-		normalized = normalize_findings(result)
-		markdown = render_report_markdown(
-			str(doc.subject_cr_id or ""),
-			str(doc.subject_name or ""),
-			normalized,
-		)
-		# The deliverable is a PDF (the markdown is kept on the doc as the
-		# plain-text record). Best-effort render: a host missing the PDF
-		# engine degrades to a report without a PDF file, never a failure.
-		pdf_bytes = None
-		try:
-			pdf_bytes = report_pdf.build_report_pdf_bytes(
-				str(doc.subject_cr_id or ""),
-				str(doc.subject_name or ""),
-				normalized,
-				duration_ms=duration_ms(),
-				data_sources=",".join(sources),
-				report_ref=report_name,
-			)
-		except Exception:
-			frappe.log_error(frappe.get_traceback(), f"report pdf render {report_name}")
-		_mark_success(
-			report_name,
-			duration_ms(),
-			pdf_bytes=pdf_bytes,
-			report=markdown,
-			findings=json.dumps(normalized, ensure_ascii=False),
-			raw_response=raw or "",
-			usage=json.dumps(usage) if usage else None,
-			model=str(settings.llm_model or ""),
-		)
+		mode = resolve_ai_mode(str(getattr(doc, "ai_mode", "") or ""))
+		if mode in ("deterministic_only", "deterministic_plus_narrative", "autonomous_full"):
+			_run_deterministic(doc, report_name, settings, sources, results, errors, tags, mode, duration_ms)
+		else:
+			_run_legacy_llm(doc, report_name, settings, sources, results, errors, tags, duration_ms)
 	except _WorkerFailure as exc:
 		_mark_failed(report_name, exc.code, exc.message, duration_ms())
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"run_discrepancy_report {report_name}")
 		_mark_failed(report_name, "INTERNAL_ERROR", "unexpected worker failure", duration_ms())
+
+
+def _run_legacy_llm(doc, report_name: str, settings, sources: list, results: dict, errors: dict, tags: list, duration_ms):
+	"""The pre-v2 pipeline: one big LLM call over the data context (kept for
+	A/B + transition — ``ai_mode = legacy_llm``)."""
+	context = build_data_context(
+		str(doc.subject_cr_id or ""), sources, results, errors, int(settings.discrepancy_max_records)
+	)
+	# Code-driven injection: registry rows for the intervention/document
+	# codes actually present in the data (empty string when none match).
+	detail = matched_benefits_lines(
+		json.dumps(context, indent=2, ensure_ascii=False, default=str)
+	)
+	prompt = build_report_prompt(
+		settings.discrepancy_system_prompt,
+		context,
+		tags,
+		benefits_reference=settings.benefits_reference,
+		benefits_detail=detail,
+	)
+
+	# Pin the generation-time state. Each db_set persists its single field
+	# directly (targeted UPDATE) — deliberately NO doc.db_update() here:
+	# the in-memory doc still carries the pre-claim status, and a full
+	# rewrite would clobber the atomic claim's Processing state.
+	doc.db_set("prompt_snapshot", prompt, update_modified=False)
+	doc.db_set("data_sources", ",".join(sources), update_modified=False)
+	patient_result = results.get("patient")
+	if isinstance(patient_result, dict) and str(patient_result.get("name") or "").strip():
+		doc.db_set("subject_name", str(patient_result.get("name")).strip(), update_modified=False)
+
+	messages = [{"role": "user", "content": prompt}]
+	try:
+		raw, usage = _call_llm(settings, messages)
+	except llm_client.LLMError:
+		# exactly ONE transport retry
+		try:
+			raw, usage = _call_llm(settings, messages)
+		except llm_client.LLMError as exc:
+			raise _WorkerFailure(_llm_error_code(exc), _llm_error_message(exc)) from exc
+	result = parse_llm_json(raw)
+	if result is None:
+		# exactly ONE corrective JSON retry
+		corrective = messages + [
+			{"role": "assistant", "content": raw or ""},
+			{"role": "user", "content": CORRECTIVE_MESSAGE},
+		]
+		try:
+			raw, usage = _call_llm(settings, corrective)
+		except llm_client.LLMError as exc:
+			raise _WorkerFailure(_llm_error_code(exc), _llm_error_message(exc)) from exc
+		result = parse_llm_json(raw)
+		if result is None:
+			_mark_failed(
+				report_name,
+				"LLM_PARSE_FAILED",
+				"the LLM reply was not valid contract JSON after one corrective retry",
+				duration_ms(),
+				raw_response=raw,
+				usage=usage,
+			)
+			return
+
+	normalized = normalize_findings(result)
+	markdown = render_report_markdown(
+		str(doc.subject_cr_id or ""),
+		str(doc.subject_name or ""),
+		normalized,
+	)
+	_mark_success(
+		report_name,
+		duration_ms(),
+		pdf_bytes=_render_pdf(doc, normalized, duration_ms, sources),
+		report=markdown,
+		findings=json.dumps(normalized, ensure_ascii=False),
+		raw_response=raw or "",
+		usage=json.dumps(usage) if usage else None,
+		model=str(settings.llm_model or ""),
+		ai_mode_used="legacy_llm",
+	)
+
+
+def _scope_results(results: dict, scoped_ctx) -> dict:
+	"""For an entity-scoped report, narrow the raw fetch results so the LLM
+	narrative digest covers only the scoped records (the scoped context's
+	claims and preauths). Member-level steps (patient, eligibility,
+	contributions, consent) pass through unchanged."""
+	if not results:
+		return results
+	claim_names = {str(c.get("name") or "").strip() for c in scoped_ctx.claims}
+	preauth_names = {str(p.get("name") or "").strip() for p in scoped_ctx.preauths}
+	out = dict(results)
+	claims = results.get("claims")
+	if isinstance(claims, dict) and isinstance(claims.get("records"), list):
+		out["claims"] = dict(claims)
+		out["claims"]["records"] = [
+			row for row in claims["records"] if isinstance(row, dict) and str(row.get("name") or "").strip() in claim_names
+		]
+	preauth = results.get("preauth")
+	if isinstance(preauth, dict) and isinstance(preauth.get("records"), list):
+		out["preauth"] = dict(preauth)
+		out["preauth"]["records"] = [
+			row for row in preauth["records"] if isinstance(row, dict) and str(row.get("name") or "").strip() in preauth_names
+		]
+	return out
+
+
+def _run_deterministic(doc, report_name: str, settings, sources: list, results: dict, errors: dict, tags: list, mode: str, duration_ms):
+	"""The v2 pipeline: deterministic rules -> evidence verification ->
+	policy -> (optional) routed AI narrative -> render. The LLM never detects
+	or decides; findings and severity are computed in code and every finding
+	is evidence-verified before it may enter the deliverable."""
+	cr_id = str(doc.subject_cr_id or "").strip()
+	report_settings = get_report_settings()
+	ctx = RuleContext.build(cr_id, sources, results, errors)
+
+	# Claim scoping: when the job names a single claim, the report becomes a
+	# payment-decision report for that claim only (its related preauths, the
+	# member's eligibility/contributions kept for context).
+	# Scoping: the job names one entity (claim / visit / preauth) or none
+	# (the member's full history). A scoped report narrows both the rule
+	# context and the narrative digest to that entity (+ its related
+	# records); member-level context stays for context.
+	claim_ref = str(getattr(doc, "subject_claim", "") or "").strip()
+	visit_ref = str(getattr(doc, "subject_visit", "") or "").strip()
+	preauth_ref = str(getattr(doc, "subject_preauth", "") or "").strip()
+	scope_kind = "claim" if claim_ref else "visit" if visit_ref else "preauth" if preauth_ref else ""
+	scoped_entity = None
+	if scope_kind == "claim":
+		ctx, scoped_entity = ctx.scope_to_claim(claim_ref)
+	elif scope_kind == "visit":
+		ctx, scoped_entity = ctx.scope_to_visit(visit_ref)
+	elif scope_kind == "preauth":
+		ctx, scoped_entity = ctx.scope_to_preauth(preauth_ref)
+
+	# Benefits surface: static matrix by default; live BenefitsExchange
+	# (query by intervention code) overrides per code when configured.
+	warnings: list = []
+	if scope_kind and scoped_entity is None:
+		warnings.append(
+			f"subject {scope_kind} {claim_ref or visit_ref or preauth_ref!r} not found in the fetched records — reporting on the member's full history instead"
+		)
+	if str(report_settings.benefits_mode or "").lower() == "live":
+		profiles, benefits_source, live_warnings = get_benefits_profiles(ctx.all_intervention_codes(), report_settings)
+		warnings.extend(live_warnings)
+		ctx.registry = {**ctx.registry, **profiles}
+	else:
+		benefits_source = "static" if ctx.registry else "none"
+
+	engine_out = run_rules(ctx, tags, report_settings)
+	warnings.extend(engine_out["warnings"])
+	result = engine_out["result"]
+
+	# The optional narrative stage: redacted digest in, validated prose out;
+	# any failure keeps the deterministic summary (the report never blocks on
+	# the model).
+	models_used: list = []
+	if mode in ("deterministic_plus_narrative", "autonomous_full"):
+		scoped_results = _scope_results(results, ctx) if scope_kind else results
+		data_context = build_data_context(cr_id, sources, scoped_results, errors, int(settings.discrepancy_max_records))
+		redacted = redact_context_for_llm(data_context, redaction_policy(report_settings))
+		stage = run_narrative_stage(
+			report_settings,
+			settings,
+			cr_id,
+			redacted,
+			result,
+			mode=mode,
+			model_pref=str(getattr(doc, "model_pref", "") or "auto"),
+		)
+		warnings.extend(stage["warnings"])
+		if stage.get("model"):
+			models_used.append(str(stage["model"]))
+		if stage.get("variants"):
+			for key in ("model_clinical", "model_general"):
+				name = str(stage["variants"].get(key) or "")
+				if name and name not in models_used:
+					models_used.append(name)
+			result["narrative_variants"] = stage["variants"]
+		if stage.get("usage"):
+			usage = stage["usage"]
+		if stage.get("result"):
+			result["summary"] = stage["result"]["summary"]
+			result["executive_summary"] = stage["result"]["executive_summary"]
+
+	# Pin the generation-time state (targeted field updates — same pattern as
+	# the legacy path; no doc.db_update() to clobber the atomic claim).
+	doc.db_set("data_sources", ",".join(sources), update_modified=False)
+	patient_result = results.get("patient")
+	if isinstance(patient_result, dict) and str(patient_result.get("name") or "").strip():
+		doc.db_set("subject_name", str(patient_result.get("name")).strip(), update_modified=False)
+	blob = json.dumps(
+		{"sources": sources, "results": results, "errors": {k: str(v) for k, v in errors.items()}},
+		sort_keys=True,
+		ensure_ascii=False,
+		default=str,
+	)
+	context_hash = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+	audit = json.dumps(
+		{"mode": mode, "catalog_version": CATALOG_VERSION, "benefits_source": benefits_source, "warnings": warnings, "findings": engine_out["provenance"]},
+		ensure_ascii=False,
+		default=str,
+	)
+	doc.db_set("prompt_snapshot", audit, update_modified=False)
+
+	markdown = render_report_markdown(cr_id, str(doc.subject_name or ""), result)
+	_mark_success(
+		report_name,
+		duration_ms(),
+		pdf_bytes=_render_pdf(doc, result, duration_ms, sources, scoped_entity),
+		report=markdown,
+		findings=json.dumps(result, ensure_ascii=False),
+		usage=json.dumps(stage["usage"], ensure_ascii=False) if (mode in ("deterministic_plus_narrative", "autonomous_full") and stage.get("usage")) else None,
+		model=",".join(models_used) or "deterministic",
+		ai_mode_used=mode,
+		catalog_version=CATALOG_VERSION,
+		benefits_source=benefits_source,
+		models_used=",".join(models_used) or "",
+		data_context_hash=context_hash,
+		findings_provenance=audit,
+	)
+
+
+def _render_pdf(doc, result: dict, duration_ms, sources: list, scoped_claim=None):
+	"""Best-effort PDF render for a run (both pipelines): a host missing the
+	PDF engine degrades to a report without a PDF file, never a failure."""
+	try:
+		status_value = str((scoped_claim or {}).get("claim_status") or "").strip() if scoped_claim else ""
+		status_label = ""
+		if status_value:
+			row = frappe.db.get_value("HISI Claim Status", status_value, "label")
+			status_label = str(row or "").strip()
+		subject_preauth = str(getattr(doc, "subject_preauth", "") or "").strip()
+		return report_pdf.build_report_pdf_bytes(
+			str(doc.subject_cr_id or ""),
+			str(doc.subject_name or ""),
+			result,
+			duration_ms=duration_ms(),
+			data_sources=",".join(sources),
+			report_ref=doc.name,
+			generated_at=str(frappe.utils.now()),
+			subject_claim=str(getattr(doc, "subject_claim", "") or "").strip(),
+			subject_visit=str(getattr(doc, "subject_visit", "") or "").strip(),
+			subject_preauth=subject_preauth,
+			claim_status=status_value,
+			claim_status_label=status_label,
+		)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"report pdf render {doc.name}")
+		return None
 
 
 def sweep_stuck_reports() -> int:
