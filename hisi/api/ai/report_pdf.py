@@ -294,6 +294,7 @@ def render_report_html(
 	claim_status_label: str | None = None,
 	coverage: dict | None = None,
 	contribution_ledger: list | None = None,
+	narrative_state: str | None = None,
 ) -> str:
 	"""The full report page. ``result`` is the normalized payload
 	(``summary`` / ``executive_summary`` / ``overall`` / ``findings``);
@@ -308,7 +309,9 @@ def render_report_html(
 	``coverage`` (optional, per-lane status + counts from the rule context)
 	renders the Coverage section; ``contribution_ledger`` (optional, sorted
 	ledger entries) renders the grouped Contribution ledger section — context
-	only, never a finding source."""
+	only, never a finding source. ``narrative_state`` (optional) is a
+	human-readable reason the AI narrative was skipped or rejected — the
+	deterministic summary stands in and says so, never silently."""
 	result = result or {}
 	findings = sorted(
 		(f for f in (result.get("findings") or []) if isinstance(f, dict)),
@@ -494,10 +497,18 @@ def render_report_html(
 
 	# ---- body --------------------------------------------------------------
 	summary = str(result.get("executive_summary") or result.get("summary") or "").strip()
+	narrative_note = (
+		'<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;'
+		'padding:6px 10px;margin-top:8px;">'
+		+ "Narrative: " + _esc(str(narrative_state)) + "</div>"
+		if narrative_state
+		else ""
+	)
 	summary_html = (
 		'<div style="padding:16px 28px 0 28px;">'
 		'<div style="font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;">Executive Summary</div>'
-		'<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;background:#ffffff;'
+		+ narrative_note
+		+ '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;background:#ffffff;'
 		'font-size:13px;color:#374151;line-height:1.6;margin-top:8px;white-space:pre-wrap;">'
 		+ (_esc(summary) if summary else "No summary produced.")
 		+ "</div></div>"
@@ -569,6 +580,7 @@ def build_report_pdf_bytes(
 	claim_status_label: str | None = None,
 	coverage: dict | None = None,
 	contribution_ledger: list | None = None,
+	narrative_state: str | None = None,
 ) -> bytes:
 	"""Render the report to PDF bytes (the job's deliverable)."""
 	html = render_report_html(
@@ -586,6 +598,7 @@ def build_report_pdf_bytes(
 		claim_status_label=claim_status_label,
 		coverage=coverage,
 		contribution_ledger=contribution_ledger,
+		narrative_state=narrative_state,
 	)
 	return pdfkit.from_string(html, False)
 

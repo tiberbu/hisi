@@ -131,7 +131,70 @@ DEFAULT_TAGS = (
 		"preauthorization references that visit — recorded service that was never billed to the payer.",
 		"shr_data_without_claim",
 	),
+	# Phase C+ — cross-facility duplicate billing (same codes + overlapping
+	# dates, different facilities; the cross-billing fraud pattern).
+	(
+		"CROSS_FACILITY_DUPLICATE",
+		"Duplicate billing across facilities",
+		"high",
+		"Two claims bill the same intervention(s) with overlapping service dates against two different "
+		"facilities. A classic cross-billing pattern — verify whether it is a legitimate multi-provider "
+		"referral before escalation.",
+		"cross_facility_duplicate",
+	),
+	# Consent lifecycle integrity: the consent was granted after the service.
+	(
+		"CONSENT_AFTER_SERVICE",
+		"Consent created after the service",
+		"medium",
+		"The claim's service date predates the creation of the visit's consent record beyond tolerance — "
+		"consent granted after the fact warrants review.",
+		"consent_after_service",
+	),
+	# Preauthorization window: the service fell outside the authorized period.
+	(
+		"PREAUTH_PERIOD_MISMATCH",
+		"Service outside the preauthorization window",
+		"medium",
+		"The claim's service dates do not overlap the related preauthorization's authorized service period "
+		"beyond tolerance — the service was rendered outside the authorized window.",
+		"preauth_period_mismatch",
+	),
+	# Medication triangulation: claimed medication with no prescription-side documentation.
+	(
+		"MEDICATION_NOT_DOCUMENTED",
+		"Claimed medication with no prescription documentation",
+		"medium",
+		"The claim bills medication-family interventions, the visit's clinical record is documented, but it "
+		"holds no MedicationRequest resource — no prescription-side documentation for the claimed medication.",
+		"medication_not_documented",
+	),
+	# Reserved — blocked on DHA payload fields (the claim side carries no
+	# expiry / scheme data today). Seeded rule_type "off": the catalog is
+	# complete, the rule activates by config the moment the fields exist.
+	(
+		"PREAUTH_EXPIRED",
+		"Service after preauthorization expiry",
+		"medium",
+		"The claim's service date falls after the related preauthorization's validity expiry date. (Reserved: "
+		"activates when the preauth payload exposes a validity/expiry field.)",
+		"preauth_expired",
+	),
+	(
+		"SCHEME_MISMATCH",
+		"Claim on an inactive scheme",
+		"high",
+		"The claim bills a scheme that is not active for the member on the eligibility record. (Reserved: "
+		"activates when the claim payload carries a scheme field.)",
+		"scheme_mismatch",
+	),
 )
+
+
+#: Tag codes seeded switched off: the deterministic check is blocked on DHA
+#: payload fields (no preauth expiry / claim scheme data today). They activate
+#: by config (rule_type code) the moment the fields exist.
+RESERVED_TAG_CODES = frozenset({"PREAUTH_EXPIRED", "SCHEME_MISMATCH"})
 
 
 def ensure_default_tags() -> int:
@@ -141,6 +204,9 @@ def ensure_default_tags() -> int:
 	for tag_code, label, severity, instruction, rule_key in DEFAULT_TAGS:
 		if tag_code in existing:
 			continue
+		# Reserved tags (blocked on DHA payload fields) are seeded switched off
+		# — the catalog is complete, the rule activates by config later.
+		rule_type = "off" if tag_code in RESERVED_TAG_CODES else "code"
 		doc = frappe.get_doc(
 			{
 				"doctype": TAG,
@@ -149,7 +215,7 @@ def ensure_default_tags() -> int:
 				"severity": severity,
 				"instruction": instruction,
 				"enabled": 1,
-				"rule_type": "code",
+				"rule_type": rule_type,
 				"rule_key": rule_key,
 				"severity_policy": "fixed",
 				"version": 1,

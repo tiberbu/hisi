@@ -43,6 +43,24 @@ def _claim(name="CLM-1", **kw):
 	return base
 
 
+def _preauth(name="PR-1", **kw):
+	"""Preauthorization-shaped record (preauths mirror the claim payload)."""
+	base = _claim(name=name)
+	base.update(
+		{
+			"use": "preauthorization",
+			"claim_subtype": "preauth",
+			"visit_id": "V-1",
+			"date_start": "2026-05-01",
+			"date_end": "2026-05-05",
+			"interventions_code": ["SHA-19-010"],
+			"interventions": ["Surgery"],
+		}
+	)
+	base.update(kw)
+	return base
+
+
 def _consent(name="CNS-1", visit_id="V-1", facility_id="FAC-1", status="Approved"):
 	return {
 		"name": name,
@@ -819,3 +837,141 @@ class TestScopeResults(unittest.TestCase):
 		self.assertEqual(out["patient"], results["patient"])
 		# input not mutated
 		self.assertEqual(len(results["claims"]["records"]), 2)
+
+
+class TestCrossFacilityDuplicate(unittest.TestCase):
+	def _two_claims_different_facilities(self, **kw_a):
+		a = _claim("CLM-A", facility="FAC-1", facility_name="Hospital A", interventions_code=["SHA-12-001"], date_start="2026-05-01", date_end="2026-05-01")
+		a.update(kw_a)
+		b = _claim("CLM-B", facility="FAC-2", facility_name="Hospital B", interventions_code=["SHA-12-001"], date_start="2026-05-01", date_end="2026-05-01")
+		return a, b
+
+	def test_cross_facility_same_codes_overlapping_dates_flagged(self):
+		a, b = self._two_claims_different_facilities()
+		out = ev.eval_cross_facility_duplicate(_ctx(claims=[a, b]), {})
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["tag_code"], "CROSS_FACILITY_DUPLICATE")
+		self.assertEqual(out[0]["severity"], "high")
+
+	def test_same_facility_not_flagged_here(self):
+		a = _claim("CLM-A", facility="FAC-1")
+		b = _claim("CLM-B", facility="FAC-1")
+		out = ev.eval_cross_facility_duplicate(_ctx(claims=[a, b]), {})
+		self.assertEqual(out, [])
+
+	def test_different_codes_not_flagged(self):
+		a = _claim("CLM-A", facility="FAC-1", interventions_code=["SHA-12-001"])
+		b = _claim("CLM-B", facility="FAC-2", interventions_code=["SHA-19-010"])
+		out = ev.eval_cross_facility_duplicate(_ctx(claims=[a, b]), {})
+		self.assertEqual(out, [])
+
+	def test_disjoint_dates_not_flagged(self):
+		a = _claim("CLM-A", facility="FAC-1", date_start="2026-01-01", date_end="2026-01-02")
+		b = _claim("CLM-B", facility="FAC-2", date_start="2026-06-01", date_end="2026-06-02")
+		out = ev.eval_cross_facility_duplicate(_ctx(claims=[a, b]), {})
+		self.assertEqual(out, [])
+
+	def test_missing_facility_on_either_side_skipped(self):
+		a = _claim("CLM-A", facility="", facility_name="")
+		b = _claim("CLM-B", facility="FAC-2")
+		out = ev.eval_cross_facility_duplicate(_ctx(claims=[a, b]), {})
+		self.assertEqual(out, [])
+
+
+class TestConsentAfterService(unittest.TestCase):
+	def test_consent_after_service_flagged(self):
+		consent = _consent("CNS-1", visit_id="V-1")
+		consent["creation"] = "2026-06-10 09:00:00"
+		consent["creation_date"] = "2026-06-10"
+		claim = _claim("CLM-1", visit_id="V-1", date_start="2026-05-01")
+		out = ev.eval_consent_after_service(_ctx(claims=[claim], consents=[consent]), {})
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["tag_code"], "CONSENT_AFTER_SERVICE")
+
+	def test_consent_before_service_passes(self):
+		claim = _claim("CLM-1", visit_id="V-1", date_start="2026-05-01")
+		# default consent created 2026-04-28, before service 2026-05-01
+		out = ev.eval_consent_after_service(_ctx(claims=[claim], consents=[_consent("CNS-1", visit_id="V-1")]), {})
+		self.assertEqual(out, [])
+
+	def test_unresolvable_visit_skipped(self):
+		claim = _claim("CLM-1", visit_id="unknown-visitId-2026-05-01")
+		out = ev.eval_consent_after_service(_ctx(claims=[claim]), {})
+		self.assertEqual(out, [])
+
+	def test_unparseable_dates_skipped(self):
+		consent = _consent("CNS-1", visit_id="V-1")
+		consent["creation"] = ""
+		claim = _claim("CLM-1", visit_id="V-1", date_start="")
+		out = ev.eval_consent_after_service(_ctx(claims=[claim], consents=[consent]), {})
+		self.assertEqual(out, [])
+
+
+class TestPreauthPeriodMismatch(unittest.TestCase):
+	def test_service_outside_preauth_window_flagged(self):
+		claim = _claim("CLM-1", visit_id="V-1", date_start="2026-07-01", date_end="2026-07-02", interventions_code=["SHA-19-010"])
+		pre = _preauth("PR-1", visit_id="V-1", date_start="2026-05-01", date_end="2026-05-05", interventions_code=["SHA-19-010"])
+		out = ev.eval_preauth_period_mismatch(_ctx(claims=[claim], preauths=[pre]), {})
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["tag_code"], "PREAUTH_PERIOD_MISMATCH")
+
+	def test_overlapping_windows_pass(self):
+		claim = _claim("CLM-1", visit_id="V-1", date_start="2026-05-03", date_end="2026-05-04")
+		pre = _preauth("PR-1", visit_id="V-1", date_start="2026-05-01", date_end="2026-05-05")
+		out = ev.eval_preauth_period_mismatch(_ctx(claims=[claim], preauths=[pre]), {})
+		self.assertEqual(out, [])
+
+	def test_missing_dates_skipped(self):
+		claim = _claim("CLM-1", visit_id="V-1", date_start="")
+		pre = _preauth("PR-1", visit_id="V-1", date_start="2026-05-01", date_end="2026-05-05")
+		out = ev.eval_preauth_period_mismatch(_ctx(claims=[claim], preauths=[pre]), {})
+		self.assertEqual(out, [])
+
+	def test_different_visit_and_code_no_match(self):
+		claim = _claim("CLM-1", visit_id="V-1", date_start="2026-07-01", interventions_code=["SHA-19-010"])
+		pre = _preauth("PR-1", visit_id="V-2", date_start="2026-05-01", date_end="2026-05-05", interventions_code=["SHA-12-001"])
+		out = ev.eval_preauth_period_mismatch(_ctx(claims=[claim], preauths=[pre]), {})
+		self.assertEqual(out, [])
+
+
+class TestMedicationNotDocumented(unittest.TestCase):
+	def test_sha12_claim_documented_visit_no_medreq_flagged(self):
+		claim = _claim("CLM-1", visit_id="V-1", interventions_code=["SHA-12-001"])
+		shr = {"V-1": [
+			{"resourceType": "Encounter", "id": "enc-1"},
+			{"resourceType": "Condition", "id": "cond-1"},
+		]}
+		out = ev.eval_medication_not_documented(_ctx(claims=[claim], shr_by_visit=shr), {})
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["tag_code"], "MEDICATION_NOT_DOCUMENTED")
+
+	def test_medreq_present_passes(self):
+		claim = _claim("CLM-1", visit_id="V-1", interventions_code=["SHA-12-001"])
+		shr = {"V-1": [
+			{"resourceType": "Encounter", "id": "enc-1"},
+			{"resourceType": "MedicationRequest", "id": "med-1"},
+		]}
+		out = ev.eval_medication_not_documented(_ctx(claims=[claim], shr_by_visit=shr), {})
+		self.assertEqual(out, [])
+
+	def test_undocumented_visit_skipped(self):
+		claim = _claim("CLM-1", visit_id="V-1", interventions_code=["SHA-12-001"])
+		out = ev.eval_medication_not_documented(_ctx(claims=[claim], shr_by_visit={}), {})
+		self.assertEqual(out, [])
+
+	def test_non_medication_family_skipped(self):
+		claim = _claim("CLM-1", visit_id="V-1", interventions_code=["SHA-19-010"])
+		shr = {"V-1": [{"resourceType": "Encounter", "id": "enc-1"}]}
+		out = ev.eval_medication_not_documented(_ctx(claims=[claim], shr_by_visit=shr), {})
+		self.assertEqual(out, [])
+
+
+class TestPhaseTwoEngineWiring(unittest.TestCase):
+	def test_new_rules_run_via_engine(self):
+		# The engine must dispatch the four new rule_keys without error.
+		a = _claim("CLM-A", facility="FAC-1", interventions_code=["SHA-12-001"], date_start="2026-05-01")
+		b = _claim("CLM-B", facility="FAC-2", interventions_code=["SHA-12-001"], date_start="2026-05-01")
+		tags = _tags("CROSS_FACILITY_DUPLICATE", "CONSENT_AFTER_SERVICE", "PREAUTH_PERIOD_MISMATCH", "MEDICATION_NOT_DOCUMENTED")
+		out = run_rules(_ctx(claims=[a, b]), tags, {})
+		codes = {f["tag_code"] for f in out["result"]["findings"]}
+		self.assertIn("CROSS_FACILITY_DUPLICATE", codes)

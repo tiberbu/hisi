@@ -800,3 +800,220 @@ def eval_claim_not_dispatched(ctx: RuleContext, params: dict) -> list:
 			_finding("CLAIM_NOT_DISPATCHED", "medium", f"Claim not sent to payer (status: {status})", detail, refs)
 		)
 	return _cap(findings, params)
+
+
+def eval_cross_facility_duplicate(ctx: RuleContext, params: dict) -> list:
+	"""Cross-facility duplicate billing: two claims for the same intervention
+	codes, with overlapping service dates, submitted against DIFFERENT
+	facilities. Same-facility duplicates are the ``duplicate_claim`` rule's
+	territory; a repeat across facilities is the classic cross-billing fraud
+	pattern (and can also be a legitimate multi-provider referral, so the
+	detail carries that caveat). Fail-closed: facility must be present and
+	different on both sides, codes must overlap, dates must overlap."""
+	findings = []
+	claims = [c for c in ctx.claims if isinstance(c, dict)]
+	for i, a in enumerate(claims):
+		a_fac = str(a.get("facility") or a.get("facility_name") or "").strip().lower()
+		if not a_fac:
+			continue
+		a_codes = {c for c in (a.get("interventions_code") or []) if str(c).strip()}
+		if not a_codes:
+			continue
+		for b in claims[i + 1 :]:
+			b_fac = str(b.get("facility") or b.get("facility_name") or "").strip().lower()
+			if not b_fac or b_fac == a_fac:
+				continue
+			b_codes = {c for c in (b.get("interventions_code") or []) if str(c).strip()}
+			if not (a_codes & b_codes):
+				continue
+			if not _windows_overlap(a, b, params):
+				continue
+			codes = ", ".join(sorted(a_codes & b_codes)[:4])
+			detail = (
+				f"{_claim_label(a)} ({a.get('facility_name') or a.get('facility')}) and "
+				f"{_claim_label(b)} ({b.get('facility_name') or b.get('facility')}) both bill the same "
+				f"intervention(s) {codes} with overlapping service dates, against two different facilities. "
+				"Cross-facility duplicate billing — verify whether this is a legitimate multi-provider "
+				"referral before escalation."
+			)
+			refs = [r for r in (_facility_ref(claim) for claim in (a, b)) if r]
+			findings.append(
+				_finding("CROSS_FACILITY_DUPLICATE", "high", "Same services billed from two different facilities", detail, refs)
+			)
+	return _cap(findings, params)
+
+
+def _windows_overlap(a: dict, b: dict, params: dict) -> bool:
+	"""True when the two records' service windows overlap (or either side has
+	no parseable window — a missing date can't prove the windows are apart)."""
+	tolerance = _tolerance_days(params)
+	a_start, a_end = _window(a)
+	b_start, b_end = _window(b)
+	if a_start and b_end and b_end < a_start:
+		if (a_start - b_end).days > tolerance:
+			return False
+	if b_start and a_end and a_end < b_start:
+		if (b_start - a_end).days > tolerance:
+			return False
+	return True
+
+
+def _facility_ref(claim: dict):
+	"""Evidence ref for a claim's facility — the id when present, else the
+	display name (cited against the field that actually holds it, so the
+	evidence verifier can prove it)."""
+	fac_id = str(claim.get("facility") or "").strip()
+	fac_name = str(claim.get("facility_name") or "").strip()
+	if fac_id:
+		return _ref("claims", claim.get("name"), "facility", fac_id)
+	if fac_name:
+		return _ref("claims", claim.get("name"), "facility_name", fac_name)
+	return None
+
+
+def _window(rec: dict) -> tuple:
+	start = _parse_date(rec.get("date_start"))
+	end = _parse_date(rec.get("date_end")) or start
+	return start, end
+
+
+def _tolerance_days(params: dict) -> int:
+	try:
+		return max(0, int(params.get("tolerance_days", 1)))
+	except (TypeError, ValueError):
+		return 1
+
+
+def eval_consent_after_service(ctx: RuleContext, params: dict) -> list:
+	"""Consent created after the service it covers: the claim's visit has a
+	consent record whose creation date is later than the claim's service start
+	(beyond ``tolerance_days``). A consent granted in hindsight is an audit
+	smell (the service happened before authorization), hence medium — not
+	proof of wrongdoing on its own. Fail-closed: needs the visit resolved to a
+	consent record with a parseable creation date and a parseable service
+	start."""
+	tolerance = _tolerance_days(params)
+	findings = []
+	consent_by_visit = ctx.consent_by_visit
+	for claim in ctx.claims:
+		visit_id = str(claim.get("visit_id") or "").strip()
+		if not visit_id or visit_id.startswith("unknown-visitId"):
+			continue
+		consent = consent_by_visit.get(visit_id)
+		if not consent:
+			continue
+		created = _parse_date(consent.get("creation")) or _parse_date(consent.get("creation_date"))
+		service_start = _parse_date(claim.get("date_start"))
+		if not created or not service_start:
+			continue
+		if (created - service_start).days > tolerance:
+			consent_status = str(consent.get("consent_status") or consent.get("status") or "").strip()
+			detail = (
+				f"{_claim_label(claim)} was served starting {service_start.isoformat()}, but the visit's "
+				f"consent record ({consent.get('name') or visit_id}) was only created {created.isoformat()} — "
+				f"{(created - service_start).days} days after the service"
+				+ (f" (status: {consent_status})" if consent_status else "")
+				+ ". Consent granted after the fact warrants review."
+			)
+			refs = [
+				_ref("claims", claim.get("name"), "date_start", str(claim.get("date_start") or "")),
+				_ref("consent", consent.get("name"), "creation", str(consent.get("creation") or "")),
+			]
+			findings.append(
+				_finding("CONSENT_AFTER_SERVICE", "medium", "Consent created after the service it covers", detail, refs)
+			)
+	return _cap(findings, params)
+
+
+def eval_preauth_period_mismatch(ctx: RuleContext, params: dict) -> list:
+	"""Preauthorization service-period mismatch: a claim whose related preauth
+	authorizes a service window that does NOT overlap the claim's service
+	dates (beyond ``tolerance_days`` per side). The preauth exists but the
+	service was rendered outside the authorized window. Fail-closed: a related
+	preauth must be resolved (same visit + overlapping code, the same matching
+	rule as ``missing_preauth``) and both windows must be parseable — missing
+	dates on either side mean nothing can be proven, so the claim is skipped."""
+	tolerance = _tolerance_days(params)
+	findings = []
+	preauths = [p for p in ctx.preauths if isinstance(p, dict)]
+	for claim in ctx.claims:
+		c_start, c_end = _window(claim)
+		if not c_start:
+			continue
+		c_codes = {c for c in (claim.get("interventions_code") or []) if str(c).strip()}
+		c_visit = str(claim.get("visit_id") or "").strip()
+		for pre in preauths:
+			p_visit = str(pre.get("visit_id") or "").strip()
+			if c_visit and p_visit and c_visit != p_visit:
+				continue
+			p_codes = {c for c in (pre.get("interventions_code") or []) if str(c).strip()}
+			if c_codes and p_codes and not (c_codes & p_codes):
+				continue
+			p_start, p_end = _window(pre)
+			if not p_start:
+				continue
+			# Overlap test with per-side tolerance; no overlap -> mismatch.
+			overlaps = not (
+				(c_end and p_start and p_start > c_end and (p_start - c_end).days > tolerance)
+				or (p_end and c_start and c_start > p_end and (c_start - p_end).days > tolerance)
+			)
+			if overlaps:
+				continue
+			detail = (
+				f"{_claim_label(claim)} was served {c_start.isoformat()}"
+				+ (f"–{c_end.isoformat()}" if c_end and c_end != c_start else "")
+				+ f", but its preauthorization {pre.get('name')} only covers "
+				f"{p_start.isoformat()}"
+				+ (f"–{p_end.isoformat()}" if p_end and p_end != p_start else "")
+				+ " — the service window falls outside the authorized preauthorization period."
+			)
+			refs = [
+				_ref("claims", claim.get("name"), "date_start", str(claim.get("date_start") or "")),
+				_ref("preauth", pre.get("name"), "date_start", str(pre.get("date_start") or "")),
+			]
+			findings.append(
+				_finding(
+					"PREAUTH_PERIOD_MISMATCH",
+					"medium",
+					"Service rendered outside the preauthorization window",
+					detail,
+					refs,
+				)
+			)
+			break  # one finding per claim (first matching preauth)
+	return _cap(findings, params)
+
+
+def eval_medication_not_documented(ctx: RuleContext, params: dict) -> list:
+	"""Medication triangulation (the medication counterpart of
+	``tri_intervention``): a claim billing medication-family interventions
+	(``SHA-12`` prefix by default, configurable) whose visit's clinical record
+	is documented (has Condition or Encounter resources) yet contains no
+	MedicationRequest — the claimed medication has no prescription-side
+	documentation in the visit record. Fail-closed: the visit must have at
+	least one clinical resource (an undocumented visit is the
+	``claim_without_shr_data`` rule's territory, not this one)."""
+	family = str(params.get("medication_family", "SHA-12") or "SHA-12").strip()
+	findings = []
+	for claim in ctx.claims:
+		codes = [c for c in (claim.get("interventions_code") or []) if str(c).strip().upper().startswith(family.upper())]
+		if not codes:
+			continue
+		visit_id = str(claim.get("visit_id") or "").strip()
+		if not visit_id or visit_id.startswith("unknown-visitId"):
+			continue
+		clinical = _visit_resources(ctx, visit_id, "Condition", "Encounter")
+		if not clinical:
+			continue  # visit not documented at all -> not this rule's call
+		if _visit_resources(ctx, visit_id, "MedicationRequest"):
+			continue  # medication documented -> no finding
+		detail = (
+			f"{_claim_label(claim)} bills medication intervention(s) {', '.join(codes[:4])} for visit "
+			f"{visit_id}, but the visit's clinical record documents the encounter without any "
+			f"MedicationRequest resource — no prescription-side documentation for the claimed medication."
+		)
+		refs = [_ref("claims", claim.get("name"), "interventions_code", codes[0])]
+		findings.append(
+			_finding("MEDICATION_NOT_DOCUMENTED", "medium", "Claimed medication with no prescription documentation", detail, refs)
+		)
+	return _cap(findings, params)

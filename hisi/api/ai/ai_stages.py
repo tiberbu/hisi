@@ -52,7 +52,7 @@ NARRATIVE_CONTRACT = (
 	"records, dates, amounts or identifiers."
 )
 
-_CORRECTIVE = "Your last reply was not valid JSON. Reply with the JSON object only."
+_CORRECTIVE = _CORRECTIVE_BASE = "Your last reply was rejected. Reply with the JSON object only — no prose, no markdown fences."
 
 #: PII shapes that must not survive the PII scan (a hit rejects the reply).
 _PII_PATTERNS = (
@@ -145,9 +145,13 @@ def _merge_usage(*usages) -> dict | None:
 
 def _narrative_model_loop(ai_settings, model: str, messages: list, max_calls: int, allowed_text: str = "") -> dict:
 	"""One model run of the narrative contract: stream, parse, validate, and
-	at most one corrective retry. Returns ``{"result", "model", "usage",
-	"warnings"}`` (``result`` is None when no valid contract came back)."""
+	a corrective retry for every invalid reply (up to ``max_calls`` total).
+	Each corrective names the concrete failure (invalid JSON / missing fields /
+	PII leak) so the model can fix it. Returns ``{"result", "model", "usage",
+	"warnings"}`` (``result`` is None when no valid contract came back; the
+	final warning carries the last failure reason)."""
 	usage = None
+	reason = "empty response"
 	for attempt in range(max_calls):
 		try:
 			raw, call_usage = llm_client.stream_chat_completion(
@@ -167,27 +171,31 @@ def _narrative_model_loop(ai_settings, model: str, messages: list, max_calls: in
 			}
 		usage = call_usage if call_usage else usage
 		parsed = None
+		parse_error = None
 		try:
 			parsed = json.loads(raw) if raw and raw.strip().startswith("{") else None
-		except (json.JSONDecodeError, ValueError):
-			parsed = None
-		if parsed is None:
+		except (json.JSONDecodeError, ValueError) as exc:
+			parse_error = str(exc)[:80]
+		if parsed is None and not parse_error:
 			from hisi.api.ai.prompt import extract_json_object
 
 			parsed = extract_json_object(raw)
-		validated = _validate_narrative(parsed, allowed_text) if parsed is not None else None
-		if validated is not None:
-			return {"result": validated, "model": model, "usage": usage, "warnings": []}
-		# One corrective retry (the raw reply echoed as an assistant turn).
+		if parsed is None:
+			reason = f"invalid JSON ({parse_error or 'no JSON object found in the reply'})"
+		else:
+			validated = _validate_narrative(parsed, allowed_text)
+			if validated is not None:
+				return {"result": validated, "model": model, "usage": usage, "warnings": []}
+			reason = "contract validation failed (missing summary/executive, over-length, or a PII-shaped leak)"
 		messages = messages + [
 			{"role": "assistant", "content": raw or ""},
-			{"role": "user", "content": _CORRECTIVE},
+			{"role": "user", "content": f"{_CORRECTIVE_BASE} Last rejection: {reason}"},
 		]
 	return {
 		"result": None,
 		"model": model,
 		"usage": usage,
-		"warnings": ["narrative stage produced no valid contract JSON after retry; deterministic summary used"],
+		"warnings": [f"narrative stage produced no valid contract after {max_calls} call(s) — last rejection: {reason}; deterministic summary used"],
 	}
 
 
@@ -233,7 +241,7 @@ def run_narrative_stage(
 				"(deterministic summary used)"
 			],
 		}
-	max_calls = max(1, int(report_settings.get("max_llm_calls") or 2))
+	max_calls = max(1, 1 + max(0, int(report_settings.get("narrative_retries") or 2)))
 	messages = [{"role": "user", "content": prompt}]
 	pref = str(model_pref or "auto").strip().lower()
 	if pref not in ("", "auto", "clinical", "general", "both"):
