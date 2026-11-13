@@ -262,7 +262,7 @@ def eval_amount_mismatch(ctx: RuleContext, params: dict) -> list:
 				name = str(row.get("intervention_name") or code)
 				detail = (
 					f"{_claim_label(claim)} bills {amount:,.2f} KES for {name} ({code}), but the "
-					f"benefits registry prices that intervention at {tariff:,.2f} KES — a deviation "
+					f"registry prices that intervention at {tariff:,.2f} KES — a deviation "
 					f"of {deviation:,.2f} KES ({deviation / tariff * 100:.1f}% of the tariff) exceeds "
 					f"the {tolerance_pct:g}% tolerance."
 				)
@@ -704,4 +704,155 @@ def eval_tri_facility(ctx: RuleContext, params: dict) -> list:
 		refs = [_ref("claims", claim.get("name"), "facility", claim_facility)]
 		refs.append(_ref("consent", consent.get("name"), "facility_id", consent_facility))
 		findings.append(_finding("TRI_FACILITY", "medium", "Claim facility differs from the consented facility", detail, refs))
+	return _cap(findings, params)
+
+
+def _records_lane_reliable(ctx: RuleContext) -> bool:
+	"""True when the per-visit SHR lane was actually fetched and did not error.
+
+	The claim<->SHR directionality checks rely on an *absence* in the SHR
+	being meaningful. When the records lane was not fetched (not in the
+	configured sources) or errored, an empty SHR for a visit is not evidence
+	of "no data" — it is "unknown" — so those checks must skip."""
+	if ctx.errors.get("records"):
+		return False
+	if ctx.records is None:
+		return False
+	if "records" not in ctx.sources:
+		return False
+	return True
+
+
+def _available_shr(ctx: RuleContext, visit_id: str) -> list:
+	"""All SHR resources available for a visit, from either source: the
+	claim/preauth bundle join (``shr_by_visit`` — what the claim itself was
+	submitted in) or the shared-store records lane (``records.by_visit`` —
+	what HealthLake holds for the consented visit). A visit counts as having
+	clinical data when either source holds resources for it."""
+	resources = list(ctx.shr_by_visit.get(visit_id) or [])
+	records_result = ctx.records
+	if isinstance(records_result, dict):
+		by_visit = records_result.get("by_visit")
+		if isinstance(by_visit, dict):
+			for extra in by_visit.get(visit_id) or []:
+				if isinstance(extra, dict) and extra not in resources:
+					resources.append(extra)
+	return resources
+
+
+def eval_claim_without_shr_data(ctx: RuleContext, params: dict) -> list:
+	"""Claim sent, but the visit's SHR bundle is empty: a claim that asserts
+	service was rendered for a visit the shared health record holds no clinical
+	resource for at all (no Encounter, nothing). This is the claim->SHR
+	direction of the "claims sent vs data available" comparison.
+
+	Fail-soft: skipped entirely when the records lane did not run or errored
+	(an empty SHR there means unknown, not absent). Claims whose visit cannot
+	be resolved (no visit id, or an ``unknown-visitId`` synthetic key) are
+	skipped — there is no visit bucket to check. A visit whose SHR holds only
+	an Encounter (no findings) is NOT flagged here: the encounter is a record
+	the visit happened, and the ``tri_*`` rules own the deeper
+	"claimed content not documented" checks."""
+	if not _records_lane_reliable(ctx):
+		return []
+	findings = []
+	for claim in ctx.claims:
+		visit_id = str(claim.get("visit_id") or "").strip()
+		if not visit_id or visit_id.startswith("unknown-visitId"):
+			continue
+		if _available_shr(ctx, visit_id):
+			continue
+		detail = (
+			f"{_claim_label(claim)} bills service for visit {visit_id}, but the shared health record "
+			"holds no clinical resource for that visit at all (no encounter, no findings) — the claim "
+			"is not supported by any recorded data for the visit."
+		)
+		refs = [_ref("claims", claim.get("name"), "visit_id", visit_id)]
+		consent = ctx.consent_by_visit.get(visit_id)
+		if consent:
+			refs.append(_ref("consent", consent.get("name"), "visit_id", visit_id))
+		findings.append(_finding("CLAIM_WITHOUT_SHR_DATA", "high", "Claim sent with no clinical record for the visit", detail, refs))
+	return _cap(findings, params)
+
+
+def eval_shr_data_without_claim(ctx: RuleContext, params: dict) -> list:
+	"""SHR data present, but nothing billed: a consented visit whose shared
+	health record holds clinical resources, yet no claim or preauthorization
+	references that visit. This is the SHR->claim direction of the
+	"claims sent vs data available" comparison — service that was recorded
+	clinically but never put to the payer.
+
+	Only the scope's own visits are considered (an entity-scoped report must
+	not flag visits outside its scope). Severity is low and informational: a
+	recorded visit with no claim can be legitimate (free service, pending
+	billing, or a visit not billable to the scheme), so it is surfaced, not
+	treated as a discrepancy."""
+	if not _records_lane_reliable(ctx):
+		return []
+	findings = []
+	seen = set()
+	for visit in ctx.visits:
+		if not isinstance(visit, dict):
+			continue
+		visit_id = str(visit.get("visit_id") or "").strip()
+		if not visit_id or visit_id in seen:
+			continue
+		seen.add(visit_id)
+		resources = _available_shr(ctx, visit_id)
+		if not resources:
+			continue
+		consent = ctx.consent_by_visit.get(visit_id)
+		if not consent:
+			continue
+		referenced = any(
+			str(r.get("visit_id") or "").strip() == visit_id
+			for r in ctx.claims + ctx.preauths
+		)
+		if referenced:
+			continue
+		detail = (
+			f"The shared health record holds {len(resources)} clinical resource(s) for visit {visit_id} "
+			f"(consent {consent.get('name')}), but no claim or preauthorization references that visit — "
+			"recorded service that was never billed to the payer."
+		)
+		refs = [_ref("consent", consent.get("name"), "visit_id", visit_id)]
+		first = resources[0]
+		refs.append(_ref("shr", f"{visit_id}#{first.get('resourceType')}#0", "resourceType", first.get("resourceType")))
+		findings.append(_finding("SHR_DATA_WITHOUT_CLAIM", "low", "Clinical record for a visit with no claim", detail, refs))
+	return _cap(findings, params)
+
+
+def eval_claim_not_dispatched(ctx: RuleContext, params: dict) -> list:
+	"""Claims whose status means they were NOT successfully sent to the payer
+	(configured in ``HISI Claim Status`` — e.g. ``failed_dispatch`` or
+	``queued_for_validation``).
+
+	For a payment-decision report these must be surfaced as context, not as
+	payment discrepancies: the claim is not yet in play, so amount or
+	preauthorization findings on it are provisional. Claims whose status is not
+	configured (``sent_to_payer`` is ``None``) are skipped — the report never
+	assumes a dispatch state it cannot verify.
+	"""
+	findings = []
+	for claim in ctx.claims:
+		sent = claim.get("sent_to_payer")
+		if sent is not False:
+			continue
+		status = str(claim.get("claim_status") or "").strip()
+		note = str(claim.get("status_note") or "").strip()
+		detail = (
+			f"{_claim_label(claim)} has status '{status}', which means it was not successfully "
+			f"sent to the payer system. The claim is not yet in play for payment."
+		)
+		if note:
+			detail += f" {note}"
+		else:
+			detail += (
+				" Amount and preauthorization findings for this claim are provisional and should "
+				"not be read as a payment discrepancy until dispatch succeeds."
+			)
+		refs = [_ref("claims", claim.get("name"), "claim_status", status)]
+		findings.append(
+			_finding("CLAIM_NOT_DISPATCHED", "medium", f"Claim not sent to payer (status: {status})", detail, refs)
+		)
 	return _cap(findings, params)

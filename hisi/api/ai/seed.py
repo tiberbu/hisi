@@ -110,6 +110,34 @@ DEFAULT_TAGS = (
 		"The claim's facility differs from the facility named on the consent record for the same visit.",
 		"tri_facility",
 	),
+	(
+		"CLAIM_NOT_DISPATCHED",
+		"Claim not sent to payer",
+		"medium",
+		"The claim's status (per the HISI Claim Status config) means it was not successfully sent to the "
+		"payer system (e.g. failed_dispatch or queued_for_validation). Surfaced as context so payment-oriented "
+		"findings on the claim are read as provisional, not as a payment discrepancy.",
+		"claim_not_dispatched",
+	),
+	# Phase C — claims-sent vs SHR-data-available (the visit's claims
+	# cross-checked against what the shared health record actually holds for
+	# that visit, in both directions).
+	(
+		"CLAIM_WITHOUT_SHR_DATA",
+		"Claim sent with no clinical record for the visit",
+		"high",
+		"A claim bills service for a visit, but the shared health record holds no clinical resource for "
+		"that visit at all — the claim is not supported by any recorded data for the visit.",
+		"claim_without_shr_data",
+	),
+	(
+		"SHR_DATA_WITHOUT_CLAIM",
+		"Clinical record for a visit with no claim",
+		"low",
+		"The shared health record holds clinical resources for a consented visit, but no claim or "
+		"preauthorization references that visit — recorded service that was never billed to the payer.",
+		"shr_data_without_claim",
+	),
 )
 
 
@@ -139,4 +167,85 @@ def ensure_default_tags() -> int:
 	if created and not frappe.flags.in_test:
 		frappe.db.commit()
 		frappe.logger("hisi.ai").info(f"seeded {created} default discrepancy tag(s)")
+	return created
+
+
+CLAIM_STATUS_CONFIG = "HISI Claim Status"
+
+#: Known DHA claim statuses and whether they mean the claim was successfully
+#: sent to the payer. ``sent_to_payer`` False rows are the ones that must be
+#: surfaced as context (the claim is not yet in play, so payment-oriented
+#: findings must not be read as payment discrepancies).
+DEFAULT_CLAIM_STATUSES = (
+	(
+		"failed_dispatch",
+		"Failed Dispatch",
+		0,
+		"Not successfully sent to the payer system (dispatch failed). The claim is not yet "
+		"in play; amount and preauthorization findings for this claim are provisional and "
+		"should not be read as a payment discrepancy until dispatch succeeds.",
+	),
+	(
+		"queued_for_validation",
+		"Queued for Validation",
+		0,
+		"Queued for validation and not yet sent to the payer. The claim is not yet in play; "
+		"amount and preauthorization findings for this claim are provisional.",
+	),
+	(
+		"submitted",
+		"Submitted",
+		1,
+		"",
+	),
+	(
+		"in_review",
+		"In Review",
+		1,
+		"",
+	),
+	(
+		"approved",
+		"Approved",
+		1,
+		"",
+	),
+	(
+		"rejected",
+		"Rejected",
+		1,
+		"Rejected by the payer / validator.",
+	),
+	(
+		"paid",
+		"Paid",
+		1,
+		"",
+	),
+)
+
+
+def ensure_claim_status_config() -> int:
+	"""Create the missing default claim-status rows; returns the count created.
+
+	Idempotent — existing rows (by ``claim_status``) are left untouched, so an
+	operator can override the meaning/note of any status after seeding."""
+	existing = {row.claim_status for row in frappe.get_all(CLAIM_STATUS_CONFIG, fields=["claim_status"])}
+	created = 0
+	for status, label, sent, note in DEFAULT_CLAIM_STATUSES:
+		if status in existing:
+			continue
+		frappe.get_doc(
+			{
+				"doctype": CLAIM_STATUS_CONFIG,
+				"claim_status": status,
+				"label": label,
+				"sent_to_payer": sent,
+				"note": note,
+			}
+		).insert(ignore_permissions=True)
+		created += 1
+	if created and not frappe.flags.in_test:
+		frappe.db.commit()
+		frappe.logger("hisi.ai").info(f"seeded {created} claim-status config row(s)")
 	return created

@@ -59,7 +59,7 @@ class EvidenceRef:
 	def to_string(self) -> str:
 		"""The human line the report's evidence list shows."""
 		if self.step == "registry":
-			return f"benefits registry {self.record_ref}.{self.field} = {self.quoted_value}"
+			return f"registry {self.record_ref}.{self.field} = {self.quoted_value}"
 		if self.step == "eligibility":
 			return f"eligibility.{self.field} = {self.quoted_value}"
 		if self.step == "contributions":

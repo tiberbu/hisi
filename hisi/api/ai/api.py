@@ -33,7 +33,7 @@ from hisi.api.ai import llm_client, report_pdf
 from hisi.api.ai.benefits_registry import matched_benefits_lines
 from hisi.api.ai.prompt import DEFAULT_SYSTEM_PROMPT, build_data_context, effective_benefits_reference
 from hisi.api.ai.rules.engine import AI_MODES  # noqa: F401  (re-exported for API consumers)
-from hisi.api.ai.seed import ensure_default_tags
+from hisi.api.ai.seed import ensure_claim_status_config, ensure_default_tags
 from hisi.api.ai.settings import get_ai_settings
 from hisi.api.patient import (
 	fetch_patient_contributions,
@@ -88,7 +88,9 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 
 	Body: ``{"cr_id": "...", "tag_codes": ["..."]?, "force": bool?}`` —
 	``tag_codes`` (optionally) restricts the run to a subset of enabled
-	tags. Per-patient dedupe: unless ``force`` is true, the member's
+	tags; ``subject_claim`` (optionally) scopes the report to a single
+	claim (a payment-decision report — the claim's record name or bundle id).
+	Per-patient dedupe: unless ``force`` is true, the member's
 	newest non-failed report (running or completed) is returned as-is, so
 	re-searching an already-audited patient spends no new LLM run. A fresh
 	run returns 202 with the job name; a cached report returns 200 with
@@ -107,21 +109,36 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 		if not isinstance(tag_codes, list) or not all(isinstance(code, str) for code in tag_codes):
 			raise BadRequest("tag_codes must be a list of tag codes.")
 		tag_codes = [code.strip() for code in tag_codes if code.strip()]
+	subject_claim = str(body.get("subject_claim") or "").strip()
+	subject_visit = str(body.get("subject_visit") or "").strip()
+	subject_preauth = str(body.get("subject_preauth") or "").strip()
+	model_pref = str(body.get("model") or body.get("model_pref") or "auto").strip().lower()
+	if model_pref not in ("", "auto", "clinical", "general", "both"):
+		raise BadRequest("model must be one of: auto, clinical, general, both.")
+	if sum(bool(x) for x in (subject_claim, subject_visit, subject_preauth)) > 1:
+		raise BadRequest("subject_claim, subject_visit and subject_preauth are mutually exclusive.")
 	if not force:
 		# Per-patient dedupe: the newest live or completed job for this
-		# member is the answer — hand it back without spending a new LLM
-		# run (the surface can pass force=true for a fresh analysis).
-		existing = frappe.get_all(
+		# member with the SAME scope is the answer — hand it back without
+		# spending a new LLM run (the surface can pass force=true for a
+		# fresh analysis). A different scope is a different report.
+		candidates = frappe.get_all(
 			REPORT,
 			filters={"subject_cr_id": cr_id, "status": ["in", ["Queued", "Processing", "Success"]]},
-			fields=["name", "status"],
+			fields=["name", "status", "subject_claim", "subject_visit", "subject_preauth"],
 			order_by="creation desc",
-			limit=1,
+			limit=5,
 		)
-		if existing:
-			row = existing[0]
-			return APIResponse.success(data={"report": row.name, "status": row.status, "existing": True}, status=200)
+		scope = (subject_claim, subject_visit, subject_preauth)
+		for row in candidates:
+			if (
+				str(row.get("subject_claim") or "").strip(),
+				str(row.get("subject_visit") or "").strip(),
+				str(row.get("subject_preauth") or "").strip(),
+			) == scope:
+				return APIResponse.success(data={"report": row.name, "status": row.status, "existing": True}, status=200)
 	ensure_default_tags()
+	ensure_claim_status_config()
 	filters = {"enabled": 1}
 	if tag_codes:
 		filters["tag_code"] = ["in", tag_codes]
@@ -147,6 +164,10 @@ def generate_discrepancy_report(data: str | dict = "") -> None:
 			"doctype": REPORT,
 			"naming_series": "HIS-DRP-.YYYY.-.####",
 			"subject_cr_id": cr_id,
+			"subject_claim": subject_claim or None,
+			"subject_visit": subject_visit or None,
+			"subject_preauth": subject_preauth or None,
+			"model_pref": model_pref or "auto",
 			"status": "Queued",
 			"tag_snapshot": json.dumps(snapshot, ensure_ascii=False),
 			"ai_mode": ai_mode or None,
@@ -225,6 +246,9 @@ def get_discrepancy_report(name: str) -> None:
 		"name": doc.name,
 		"subject_cr_id": doc.subject_cr_id,
 		"subject_name": doc.subject_name,
+		"subject_claim": doc.subject_claim,
+		"subject_visit": doc.subject_visit,
+		"subject_preauth": doc.subject_preauth,
 		"status": doc.status,
 		"data_sources": doc.data_sources,
 		"ai_mode_used": doc.ai_mode_used,

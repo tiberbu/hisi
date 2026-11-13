@@ -1,0 +1,78 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:claim_status",
+ "creation": "2026-11-13 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "claim_status",
+  "label",
+  "column_break_1",
+  "sent_to_payer",
+  "note"
+ ],
+ "fields": [
+  {
+   "fieldname": "claim_status",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Claim Status",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Set when this status means the claim was successfully sent to the payer system. Failed dispatch / queued-for-validation are NOT sent.",
+   "fieldname": "sent_to_payer",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Sent to Payer"
+  },
+  {
+   "description": "Optional context line injected into the report when a claim carries this status — e.g. 'not successfully dispatched to the payer; payment checks are provisional'.",
+   "fieldname": "note",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Report Note"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 0,
+ "modified": "2026-11-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "HISI",
+ "name": "HISI Claim Status",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "read": 1,
+   "role": "HISI Insurance Provider"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

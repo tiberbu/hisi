@@ -23,7 +23,7 @@ import frappe
 
 from hisi.api.ai.benefits_loader import _DEFAULT_DOCS, _DEFAULT_F1, _DEFAULT_F2, load_benefits_registry
 from hisi.api.ai.benefits_registry import REGISTRY
-from hisi.api.ai.seed import ensure_default_tags
+from hisi.api.ai.seed import CLAIM_STATUS_CONFIG, ensure_claim_status_config, ensure_default_tags
 from hisi.api.ai.settings import get_ai_settings
 
 REPORT = "HISI Discrepancy Report"
@@ -36,8 +36,8 @@ def run_setup_check(apply: bool = True) -> dict:
 	auto_fixed: list[str] = []
 	action_needed: list[str] = []
 
-	# 1. Doctypes present (all three must exist for the stack to run).
-	for dt in (REPORT, TAG, REGISTRY):
+	# 1. Doctypes present (all four must exist for the stack to run).
+	for dt in (REPORT, TAG, REGISTRY, CLAIM_STATUS_CONFIG):
 		if frappe.db.exists("DocType", dt):
 			ready.append(f"doctype present: {dt}")
 		else:
@@ -71,6 +71,18 @@ def run_setup_check(apply: bool = True) -> dict:
 			ready.append(f"discrepancy tags: {tag_count} total, {enabled} enabled")
 		else:
 			action_needed.append("no discrepancy tags — none seeded (check hisi.api.ai.seed)")
+
+	# 3b. Claim-status config seeded (idempotent) — maps raw claim_status values
+	#     to whether the claim reached the payer, so reports can flag claims that
+	#     were not successfully dispatched.
+	if frappe.db.exists("DocType", CLAIM_STATUS_CONFIG):
+		if apply:
+			ensure_claim_status_config()
+		status_count = frappe.db.count(CLAIM_STATUS_CONFIG)
+		if status_count:
+			ready.append(f"claim-status config: {status_count} status(es) mapped")
+		else:
+			action_needed.append("claim-status config empty — none seeded (check hisi.api.ai.seed)")
 
 	# 4. Scheduler hook for the stuck-report sweep.
 	# This fork's get_hooks returns one merged {event: [...]} dict (upstream

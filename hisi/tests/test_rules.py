@@ -14,7 +14,7 @@ from hisi.api.ai.rules import evaluators as ev
 from hisi.api.ai.rules import redact
 from hisi.api.ai.rules.context import RuleContext
 from hisi.api.ai.rules.engine import run_rules
-from hisi.api.ai.rules.evidence import EvidenceRef, verify_ref
+from hisi.api.ai.rules.evidence import EvidenceRef, verify_findings, verify_ref
 
 
 def _claim(name="CLM-1", **kw):
@@ -274,6 +274,115 @@ class TestTriangulation(unittest.TestCase):
 		self.assertEqual(out, [])
 
 
+class TestClaimVsShrData(unittest.TestCase):
+	"""The claims-sent vs SHR-data-available comparison, both directions.
+
+	The directionality checks only run when the records lane was fetched and
+	did not error (an empty SHR there would mean unknown, not absent)."""
+
+	@staticmethod
+	def _ctx_with_records(claims=None, consents=None, preauths=None, shr_by_visit=None, visits=None, records_failed=False, records_fetched=True):
+		claims = claims if claims is not None else [_claim()]
+		consents = consents if consents is not None else [_consent()]
+		consent_by_visit = {c["visit_id"]: c for c in consents}
+		shr_by_visit = shr_by_visit or {}
+		if visits is None:
+			visits = [
+				{"visit_id": key, "consented": key in consent_by_visit, "shr_resources": records}
+				for key, records in shr_by_visit.items()
+			]
+		return RuleContext(
+			cr_id="CR-1",
+			sources=(
+				["consent", "eligibility", "contributions", "claims", "preauth", "records"]
+				if records_fetched
+				else ["consent", "eligibility", "contributions", "claims", "preauth"]
+			),
+			errors={"records": "boom"} if records_failed else {},
+			eligibility={"eligible": True, "status": "active", "scheme": "SHA", "schemes": []},
+			consents=consents,
+			consent_by_visit=consent_by_visit,
+			claims=claims,
+			preauths=preauths or [],
+			visits=visits,
+			shr_by_visit=shr_by_visit,
+			records={} if records_fetched and not records_failed else None,
+			registry={},
+		)
+
+	def test_claim_with_empty_shr_is_flagged(self):
+		out = ev.eval_claim_without_shr_data(self._ctx_with_records(shr_by_visit={}), {})
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["tag_code"], "CLAIM_WITHOUT_SHR_DATA")
+
+	def test_claim_with_shr_data_passes(self):
+		shr = {"V-1": [{"resourceType": "Encounter", "id": "enc-1"}]}
+		out = ev.eval_claim_without_shr_data(self._ctx_with_records(shr_by_visit=shr), {})
+		self.assertEqual(out, [])
+
+	def test_records_lane_failure_skips(self):
+		out = ev.eval_claim_without_shr_data(self._ctx_with_records(records_failed=True), {})
+		self.assertEqual(out, [])
+
+	def test_records_lane_not_fetched_skips(self):
+		out = ev.eval_claim_without_shr_data(self._ctx_with_records(records_fetched=False), {})
+		self.assertEqual(out, [])
+
+	def test_unresolvable_visit_skipped(self):
+		out = ev.eval_claim_without_shr_data(
+			self._ctx_with_records(claims=[_claim(visit_id="unknown-visitId-2026-05-01")]), {}
+		)
+		self.assertEqual(out, [])
+
+	def test_preauth_without_shr_not_flagged(self):
+		# The rule is about claims that assert rendered service; a preauth
+		# precedes the service, so an empty SHR is expected, not a finding.
+		out = ev.eval_claim_without_shr_data(self._ctx_with_records(claims=[]), {})
+		self.assertEqual(out, [])
+
+	def test_shr_data_without_claim_flagged(self):
+		shr = {"V-1": [{"resourceType": "Encounter", "id": "enc-1"}, {"resourceType": "Observation", "id": "obs-1"}]}
+		out = ev.eval_shr_data_without_claim(self._ctx_with_records(claims=[], shr_by_visit=shr), {})
+		self.assertEqual(len(out), 1)
+		self.assertEqual(out[0]["tag_code"], "SHR_DATA_WITHOUT_CLAIM")
+
+	def test_shr_data_with_claim_passes(self):
+		shr = {"V-1": [{"resourceType": "Encounter", "id": "enc-1"}]}
+		out = ev.eval_shr_data_without_claim(self._ctx_with_records(shr_by_visit=shr), {})
+		self.assertEqual(out, [])
+
+	def test_shr_data_referenced_by_preauth_passes(self):
+		shr = {"V-1": [{"resourceType": "Encounter", "id": "enc-1"}]}
+		out = ev.eval_shr_data_without_claim(
+			self._ctx_with_records(claims=[], preauths=[_claim(name="PA-1", use="preauth")], shr_by_visit=shr), {}
+		)
+		self.assertEqual(out, [])
+
+	def test_unconsented_visit_not_flagged(self):
+		shr = {"V-9": [{"resourceType": "Encounter", "id": "enc-1"}]}
+		out = ev.eval_shr_data_without_claim(
+			self._ctx_with_records(claims=[], consents=[], shr_by_visit=shr), {}
+		)
+		self.assertEqual(out, [])
+
+	def test_out_of_scope_visit_not_flagged(self):
+		# A scoped report must not flag a visit outside its scope: the
+		# scope's visit list (ctx.visits) carries only V-1, so V-2 — which
+		# has SHR data and no referencing claim — is invisible to this run.
+		# V-1 is in scope but already referenced by the claim, so it is
+		# skipped too. Net: no findings.
+		shr = {"V-1": [{"resourceType": "Encounter", "id": "enc-1"}], "V-2": [{"resourceType": "Observation", "id": "obs-1"}]}
+		out = ev.eval_shr_data_without_claim(
+			self._ctx_with_records(
+				claims=[_claim(visit_id="V-1")],
+				shr_by_visit=shr,
+				visits=[{"visit_id": "V-1", "consented": True, "shr_resources": [{"resourceType": "Encounter", "id": "enc-1"}]}],
+			),
+			{},
+		)
+		self.assertEqual(out, [])
+
+
 class TestEvidenceVerification(unittest.TestCase):
 	def test_verified_ref(self):
 		ctx = _ctx()
@@ -497,3 +606,190 @@ class TestBenefitsExchangeNormalizer(unittest.TestCase):
 
 if __name__ == "main":
 	unittest.main()
+
+
+class TestClaimNotDispatched(unittest.TestCase):
+	"""Claims whose status (per HISI Claim Status config) means they were NOT
+	sent to the payer are surfaced as context — so payment-oriented findings on
+	them read as provisional. Unknown dispatch state (unconfigured status) is
+	skipped: the report never assumes a state it cannot verify."""
+
+	def _nd(self, **kw):
+		c = _claim(claim_status="failed_dispatch")
+		c.update(kw)
+		return c
+
+	def test_not_dispatched_claim_is_flagged(self):
+		out = ev.eval_claim_not_dispatched(_ctx(claims=[self._nd(sent_to_payer=False, status_note="Not yet in play.")]), {})
+		self.assertEqual(len(out), 1)
+		f = out[0]
+		self.assertEqual(f["tag_code"], "CLAIM_NOT_DISPATCHED")
+		self.assertEqual(f["severity"], "medium")
+		self.assertIn("failed_dispatch", f["detail"])
+		self.assertIn("claim_status", f["evidence"][0])
+
+	def test_dispatched_claim_is_skipped(self):
+		out = ev.eval_claim_not_dispatched(_ctx(claims=[self._nd(sent_to_payer=True)]), {})
+		self.assertEqual(out, [])
+
+	def test_unknown_dispatch_state_is_skipped(self):
+		out = ev.eval_claim_not_dispatched(_ctx(claims=[self._nd(sent_to_payer=None)]), {})
+		self.assertEqual(out, [])
+
+	def test_multiple_not_dispatched_claims(self):
+		claims = [self._nd(name="CLM-A", sent_to_payer=False), self._nd(name="CLM-B", sent_to_payer=False), _claim(name="CLM-C", sent_to_payer=True)]
+		out = ev.eval_claim_not_dispatched(_ctx(claims=claims), {})
+		self.assertEqual(len(out), 2)
+
+	def test_evidence_verifies(self):
+		c = self._nd(sent_to_payer=False)
+		out = ev.eval_claim_not_dispatched(_ctx(claims=[c]), {})
+		verified, unverified = verify_findings([out[0]], _ctx(claims=[c]))
+		self.assertEqual(unverified, [])
+		self.assertEqual(len(verified), 1)
+
+
+class TestScopeToClaim(unittest.TestCase):
+	def _ctx(self):
+		a = _claim(name="CLM-1", visit_id="V-1", bundle_id="B-1", interventions_code=["SHA-12-001"])
+		b = _claim(name="CLM-2", visit_id="V-2", bundle_id="B-2", interventions_code=["SHA-16-007"])
+		pre1 = _claim(name="PR-1", use="preauth", visit_id="V-1", interventions_code=["SHA-12-001"])
+		pre2 = _claim(name="PR-2", use="preauth", visit_id="V-2", interventions_code=["SHA-16-007"])
+		pre3 = _claim(name="PR-3", use="preauth", visit_id="V-3", interventions_code=["SHA-07-011"])
+		return _ctx(claims=[a, b], preauths=[pre1, pre2, pre3])
+
+	def test_scope_by_name(self):
+		ctx, target = self._ctx().scope_to_claim("CLM-1")
+		self.assertIsNotNone(target)
+		self.assertEqual([c["name"] for c in ctx.claims], ["CLM-1"])
+		# related preauths: same visit (PR-1) — not the others
+		self.assertEqual([p["name"] for p in ctx.preauths], ["PR-1"])
+		# member-level context is preserved
+		self.assertEqual(ctx.member, None)
+		self.assertTrue(ctx.eligibility["eligible"])
+		self.assertEqual(len(ctx.consents), 1)
+
+	def test_scope_by_bundle_id(self):
+		ctx, target = self._ctx().scope_to_claim("B-2")
+		self.assertIsNotNone(target)
+		self.assertEqual([c["name"] for c in ctx.claims], ["CLM-2"])
+		self.assertEqual([p["name"] for p in ctx.preauths], ["PR-2"])
+
+	def test_scope_preauth_by_overlapping_code(self):
+		ctx = _ctx(
+			claims=[_claim(name="CLM-9", visit_id="V-9", interventions_code=["SHA-12-001"])],
+			preauths=[_claim(name="PR-9", use="preauth", visit_id="V-other", interventions_code=["SHA-12-001"])],
+		)
+		scoped, target = ctx.scope_to_claim("CLM-9")
+		self.assertIsNotNone(target)
+		self.assertEqual([p["name"] for p in scoped.preauths], ["PR-9"])
+
+	def test_unknown_claim_returns_self_and_none(self):
+		ctx = self._ctx()
+		scoped, target = ctx.scope_to_claim("CLM-NOPE")
+		self.assertIs(scoped, ctx)
+		self.assertIsNone(target)
+
+	def test_empty_ref_returns_self_and_none(self):
+		ctx = self._ctx()
+		scoped, target = ctx.scope_to_claim("  ")
+		self.assertIs(scoped, ctx)
+		self.assertIsNone(target)
+
+
+class TestScopeToVisit(unittest.TestCase):
+	def _ctx(self):
+		a = _claim(name="CLM-1", visit_id="V-1", bundle_id="B-1", interventions_code=["SHA-12-001"])
+		b = _claim(name="CLM-2", visit_id="V-2", bundle_id="B-2", interventions_code=["SHA-16-007"])
+		pre1 = _claim(name="PR-1", use="preauth", visit_id="V-1", interventions_code=["SHA-12-001"])
+		pre2 = _claim(name="PR-2", use="preauth", visit_id="V-2", interventions_code=["SHA-16-007"])
+		return _ctx(claims=[a, b], preauths=[pre1, pre2])
+
+	def test_scope_to_visit(self):
+		ctx, target = self._ctx().scope_to_visit("V-1")
+		self.assertIsNotNone(target)
+		self.assertEqual([c["name"] for c in ctx.claims], ["CLM-1"])
+		self.assertEqual([p["name"] for p in ctx.preauths], ["PR-1"])
+		# member-level context preserved
+		self.assertTrue(ctx.eligibility["eligible"])
+		self.assertEqual(len(ctx.consents), 1)
+
+	def test_scope_to_visit_no_records(self):
+		ctx, target = self._ctx().scope_to_visit("V-404")
+		self.assertIsNone(target)
+
+	def test_scope_to_visit_empty_ref(self):
+		base = self._ctx()
+		scoped, target = base.scope_to_visit("  ")
+		self.assertIs(scoped, base)
+		self.assertIsNone(target)
+
+	def test_scope_to_visit_by_registry_visit_request_id(self):
+		# The UI references visits by the registry visit_request_id (12-hex)
+		# while claims carry the consent visit_id UUID — scoping must bridge
+		# both id spaces, and include the same-day claims whose bundles
+		# carried no readable encounter (the timeline ties them by date).
+		c1 = _consent(name="VCR-20261112-FA507C99", visit_id="eb84922f-9fe6-49fe-9b67-b81bebcfaee5", status="Verified")
+		c1.update({"visit_request_id": "6C33D4C9B1BB", "creation": "2026-11-12 08:00:00", "creation_date": "2026-11-12"})
+		c2 = _consent(name="VCR-20261030-1738BDC0", visit_id="51634308-ddb2-4f89-8f2b-c6b97384c0d6", status="Verified")
+		c2.update({"visit_request_id": "5B4140EAF2DB", "creation": "2026-10-30 08:00:00", "creation_date": "2026-10-30"})
+		a = _claim(name="CLM-1", visit_id="eb84922f-9fe6-49fe-9b67-b81bebcfaee5", creation="2026-11-12 09:00:00")
+		b = _claim(name="CLM-2", visit_id="51634308-ddb2-4f89-8f2b-c6b97384c0d6", creation="2026-10-30 09:00:00")
+		c = _claim(name="CLM-3", visit_id="", creation="2026-11-12 10:00:00", date_start="2026-11-12", date_end="2026-11-12")
+		base = _ctx(claims=[a, b, c], consents=[c1, c2])
+		scoped, target = base.scope_to_visit("6C33D4C9B1BB")
+		self.assertIsNotNone(target)
+		self.assertEqual(sorted(x["name"] for x in scoped.claims), ["CLM-1", "CLM-3"])
+		self.assertEqual([x["name"] for x in scoped.consents], ["VCR-20261112-FA507C99"])
+		# the UUID and the consent name spell the same visit
+		scoped2, _ = base.scope_to_visit("eb84922f-9fe6-49fe-9b67-b81bebcfaee5")
+		self.assertEqual(sorted(x["name"] for x in scoped2.claims), ["CLM-1", "CLM-3"])
+		scoped3, _ = base.scope_to_visit("VCR-20261112-FA507C99")
+		self.assertEqual(sorted(x["name"] for x in scoped3.claims), ["CLM-1", "CLM-3"])
+
+
+class TestScopeToPreauth(unittest.TestCase):
+	def _ctx(self):
+		c1 = _claim(name="CLM-1", visit_id="V-1", bundle_id="B-1", interventions_code=["SHA-12-001"])
+		c2 = _claim(name="CLM-2", visit_id="V-9", bundle_id="B-9", interventions_code=["SHA-99"])
+		p1 = _claim(name="PR-1", use="preauth", visit_id="V-1", bundle_id="B-1", interventions_code=["SHA-12-001"])
+		return _ctx(claims=[c1, c2], preauths=[p1])
+
+	def test_scope_to_preauth_by_name(self):
+		scoped, target = self._ctx().scope_to_preauth("PR-1")
+		self.assertIsNotNone(target)
+		self.assertEqual([p["name"] for p in scoped.preauths], ["PR-1"])
+		# the related claim (same visit, bundle and codes) is kept; CLM-2 drops
+		self.assertEqual([c["name"] for c in scoped.claims], ["CLM-1"])
+
+	def test_scope_to_preauth_by_bundle(self):
+		scoped, target = self._ctx().scope_to_preauth("B-1")
+		self.assertIsNotNone(target)
+		self.assertEqual([p["name"] for p in scoped.preauths], ["PR-1"])
+
+	def test_unknown_preauth_returns_self_and_none(self):
+		ctx = self._ctx()
+		scoped, target = ctx.scope_to_preauth("PR-NOPE")
+		self.assertIs(scoped, ctx)
+		self.assertIsNone(target)
+
+
+class TestScopeResults(unittest.TestCase):
+	def test_filters_raw_results_to_scoped_context(self):
+		from hisi.api.ai import worker as ai_worker
+
+		c1 = _claim(name="CLM-1", visit_id="V-1", bundle_id="B-1")
+		c2 = _claim(name="CLM-2", visit_id="V-2", bundle_id="B-2")
+		p1 = _claim(name="PR-1", use="preauth", visit_id="V-1")
+		results = {
+			"patient": {"cr_id": "CR-1", "name": "X"},
+			"claims": {"records": [c1, c2]},
+			"preauth": {"records": [p1]},
+		}
+		ctx = _ctx(claims=[c1], preauths=[p1])
+		out = ai_worker._scope_results(results, ctx)
+		self.assertEqual([r["name"] for r in out["claims"]["records"]], ["CLM-1"])
+		self.assertEqual([r["name"] for r in out["preauth"]["records"]], ["PR-1"])
+		self.assertEqual(out["patient"], results["patient"])
+		# input not mutated
+		self.assertEqual(len(results["claims"]["records"]), 2)

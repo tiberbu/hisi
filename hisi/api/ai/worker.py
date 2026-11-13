@@ -216,6 +216,31 @@ def _run_legacy_llm(doc, report_name: str, settings, sources: list, results: dic
 	)
 
 
+def _scope_results(results: dict, scoped_ctx) -> dict:
+	"""For an entity-scoped report, narrow the raw fetch results so the LLM
+	narrative digest covers only the scoped records (the scoped context's
+	claims and preauths). Member-level steps (patient, eligibility,
+	contributions, consent) pass through unchanged."""
+	if not results:
+		return results
+	claim_names = {str(c.get("name") or "").strip() for c in scoped_ctx.claims}
+	preauth_names = {str(p.get("name") or "").strip() for p in scoped_ctx.preauths}
+	out = dict(results)
+	claims = results.get("claims")
+	if isinstance(claims, dict) and isinstance(claims.get("records"), list):
+		out["claims"] = dict(claims)
+		out["claims"]["records"] = [
+			row for row in claims["records"] if isinstance(row, dict) and str(row.get("name") or "").strip() in claim_names
+		]
+	preauth = results.get("preauth")
+	if isinstance(preauth, dict) and isinstance(preauth.get("records"), list):
+		out["preauth"] = dict(preauth)
+		out["preauth"]["records"] = [
+			row for row in preauth["records"] if isinstance(row, dict) and str(row.get("name") or "").strip() in preauth_names
+		]
+	return out
+
+
 def _run_deterministic(doc, report_name: str, settings, sources: list, results: dict, errors: dict, tags: list, mode: str, duration_ms):
 	"""The v2 pipeline: deterministic rules -> evidence verification ->
 	policy -> (optional) routed AI narrative -> render. The LLM never detects
@@ -225,9 +250,32 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	report_settings = get_report_settings()
 	ctx = RuleContext.build(cr_id, sources, results, errors)
 
+	# Claim scoping: when the job names a single claim, the report becomes a
+	# payment-decision report for that claim only (its related preauths, the
+	# member's eligibility/contributions kept for context).
+	# Scoping: the job names one entity (claim / visit / preauth) or none
+	# (the member's full history). A scoped report narrows both the rule
+	# context and the narrative digest to that entity (+ its related
+	# records); member-level context stays for context.
+	claim_ref = str(getattr(doc, "subject_claim", "") or "").strip()
+	visit_ref = str(getattr(doc, "subject_visit", "") or "").strip()
+	preauth_ref = str(getattr(doc, "subject_preauth", "") or "").strip()
+	scope_kind = "claim" if claim_ref else "visit" if visit_ref else "preauth" if preauth_ref else ""
+	scoped_entity = None
+	if scope_kind == "claim":
+		ctx, scoped_entity = ctx.scope_to_claim(claim_ref)
+	elif scope_kind == "visit":
+		ctx, scoped_entity = ctx.scope_to_visit(visit_ref)
+	elif scope_kind == "preauth":
+		ctx, scoped_entity = ctx.scope_to_preauth(preauth_ref)
+
 	# Benefits surface: static matrix by default; live BenefitsExchange
 	# (query by intervention code) overrides per code when configured.
 	warnings: list = []
+	if scope_kind and scoped_entity is None:
+		warnings.append(
+			f"subject {scope_kind} {claim_ref or visit_ref or preauth_ref!r} not found in the fetched records — reporting on the member's full history instead"
+		)
 	if str(report_settings.benefits_mode or "").lower() == "live":
 		profiles, benefits_source, live_warnings = get_benefits_profiles(ctx.all_intervention_codes(), report_settings)
 		warnings.extend(live_warnings)
@@ -244,12 +292,27 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	# the model).
 	models_used: list = []
 	if mode in ("deterministic_plus_narrative", "autonomous_full"):
-		data_context = build_data_context(cr_id, sources, results, errors, int(settings.discrepancy_max_records))
+		scoped_results = _scope_results(results, ctx) if scope_kind else results
+		data_context = build_data_context(cr_id, sources, scoped_results, errors, int(settings.discrepancy_max_records))
 		redacted = redact_context_for_llm(data_context, redaction_policy(report_settings))
-		stage = run_narrative_stage(report_settings, settings, cr_id, redacted, result, mode=mode)
+		stage = run_narrative_stage(
+			report_settings,
+			settings,
+			cr_id,
+			redacted,
+			result,
+			mode=mode,
+			model_pref=str(getattr(doc, "model_pref", "") or "auto"),
+		)
 		warnings.extend(stage["warnings"])
 		if stage.get("model"):
 			models_used.append(str(stage["model"]))
+		if stage.get("variants"):
+			for key in ("model_clinical", "model_general"):
+				name = str(stage["variants"].get(key) or "")
+				if name and name not in models_used:
+					models_used.append(name)
+			result["narrative_variants"] = stage["variants"]
 		if stage.get("usage"):
 			usage = stage["usage"]
 		if stage.get("result"):
@@ -280,7 +343,7 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	_mark_success(
 		report_name,
 		duration_ms(),
-		pdf_bytes=_render_pdf(doc, result, duration_ms, sources),
+		pdf_bytes=_render_pdf(doc, result, duration_ms, sources, scoped_entity),
 		report=markdown,
 		findings=json.dumps(result, ensure_ascii=False),
 		usage=json.dumps(stage["usage"], ensure_ascii=False) if (mode in ("deterministic_plus_narrative", "autonomous_full") and stage.get("usage")) else None,
@@ -294,10 +357,16 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	)
 
 
-def _render_pdf(doc, result: dict, duration_ms, sources: list):
+def _render_pdf(doc, result: dict, duration_ms, sources: list, scoped_claim=None):
 	"""Best-effort PDF render for a run (both pipelines): a host missing the
 	PDF engine degrades to a report without a PDF file, never a failure."""
 	try:
+		status_value = str((scoped_claim or {}).get("claim_status") or "").strip() if scoped_claim else ""
+		status_label = ""
+		if status_value:
+			row = frappe.db.get_value("HISI Claim Status", status_value, "label")
+			status_label = str(row or "").strip()
+		subject_preauth = str(getattr(doc, "subject_preauth", "") or "").strip()
 		return report_pdf.build_report_pdf_bytes(
 			str(doc.subject_cr_id or ""),
 			str(doc.subject_name or ""),
@@ -305,6 +374,12 @@ def _render_pdf(doc, result: dict, duration_ms, sources: list):
 			duration_ms=duration_ms(),
 			data_sources=",".join(sources),
 			report_ref=doc.name,
+			generated_at=str(frappe.utils.now()),
+			subject_claim=str(getattr(doc, "subject_claim", "") or "").strip(),
+			subject_visit=str(getattr(doc, "subject_visit", "") or "").strip(),
+			subject_preauth=subject_preauth,
+			claim_status=status_value,
+			claim_status_label=status_label,
 		)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"report pdf render {doc.name}")

@@ -131,50 +131,22 @@ def build_narrative_prompt(cr_id: str, digest: dict, result: dict) -> str:
 	)
 
 
-def run_narrative_stage(
-	report_settings,
-	ai_settings,
-	cr_id: str,
-	redacted_context: dict,
-	result: dict,
-	mode: str = "",
-) -> dict:
-	"""The optional narrative stage. Returns
-	``{"result": dict|None, "model": str|None, "usage": dict|None,
-	"warnings": list}`` — ``result`` is ``None`` when the stage was skipped
-	or failed (the caller keeps the deterministic summary).
+def _merge_usage(*usages) -> dict | None:
+	"""Sum token usage across model runs (both-model preference)."""
+	total: dict = {}
+	for u in usages:
+		if not isinstance(u, dict):
+			continue
+		for key, value in u.items():
+			if isinstance(value, (int, float)):
+				total[key] = total.get(key, 0) + value
+	return total or None
 
-	``mode`` is the resolved mode of the run (the site default is only a
-	fallback for direct callers)."""
-	warnings: list = []
-	mode = str(mode or report_settings.get("default_ai_mode") or "")
-	# The stage runs for the AI modes that use narrative (the worker already
-	# dispatches; this guard keeps the module safe to call directly).
-	if mode in ("deterministic_only", "legacy_llm"):
-		return {"result": None, "model": None, "usage": None, "warnings": ["narrative stage not used in mode " + mode]}
 
-	model = stage_model(NARRATIVE_STAGE, report_settings)
-	if not str(ai_settings.get("llm_base_url") or "").strip():
-		return {
-			"result": None,
-			"model": None,
-			"usage": None,
-			"warnings": ["narrative stage skipped: llm_base_url not configured (deterministic summary used)"],
-		}
-	prompt = build_narrative_prompt(cr_id, redacted_context, result)
-	max_input_tokens = int(report_settings.get("max_input_tokens") or 24000)
-	if _estimate_tokens(prompt) > max_input_tokens:
-		return {
-			"result": None,
-			"model": None,
-			"usage": None,
-			"warnings": [
-				f"narrative stage skipped: estimated input ~{_estimate_tokens(prompt)} tokens exceeds max_input_tokens {max_input_tokens} "
-				"(deterministic summary used)"
-			],
-		}
-	max_calls = max(1, int(report_settings.get("max_llm_calls") or 2))
-	messages = [{"role": "user", "content": prompt}]
+def _narrative_model_loop(ai_settings, model: str, messages: list, max_calls: int, allowed_text: str = "") -> dict:
+	"""One model run of the narrative contract: stream, parse, validate, and
+	at most one corrective retry. Returns ``{"result", "model", "usage",
+	"warnings"}`` (``result`` is None when no valid contract came back)."""
 	usage = None
 	for attempt in range(max_calls):
 		try:
@@ -203,9 +175,9 @@ def run_narrative_stage(
 			from hisi.api.ai.prompt import extract_json_object
 
 			parsed = extract_json_object(raw)
-		validated = _validate_narrative(parsed, prompt) if parsed is not None else None
+		validated = _validate_narrative(parsed, allowed_text) if parsed is not None else None
 		if validated is not None:
-			return {"result": validated, "model": model, "usage": usage, "warnings": warnings}
+			return {"result": validated, "model": model, "usage": usage, "warnings": []}
 		# One corrective retry (the raw reply echoed as an assistant turn).
 		messages = messages + [
 			{"role": "assistant", "content": raw or ""},
@@ -217,3 +189,99 @@ def run_narrative_stage(
 		"usage": usage,
 		"warnings": ["narrative stage produced no valid contract JSON after retry; deterministic summary used"],
 	}
+
+
+def run_narrative_stage(
+	report_settings,
+	ai_settings,
+	cr_id: str,
+	redacted_context: dict,
+	result: dict,
+	mode: str = "",
+	model_pref: str = "auto",
+) -> dict:
+	"""The optional narrative stage. Returns
+	``{"result": dict|None, "model": str|None, "usage": dict|None,
+	"warnings": list}`` — ``result`` is ``None`` when the stage was skipped
+	or failed (the caller keeps the deterministic summary).
+
+	``mode`` is the resolved mode of the run (the site default is only a
+	fallback for direct callers)."""
+	warnings: list = []
+	mode = str(mode or report_settings.get("default_ai_mode") or "")
+	# The stage runs for the AI modes that use narrative (the worker already
+	# dispatches; this guard keeps the module safe to call directly).
+	if mode in ("deterministic_only", "legacy_llm"):
+		return {"result": None, "model": None, "usage": None, "warnings": ["narrative stage not used in mode " + mode]}
+
+	if not str(ai_settings.get("llm_base_url") or "").strip():
+		return {
+			"result": None,
+			"model": None,
+			"usage": None,
+			"warnings": ["narrative stage skipped: llm_base_url not configured (deterministic summary used)"],
+		}
+	prompt = build_narrative_prompt(cr_id, redacted_context, result)
+	max_input_tokens = int(report_settings.get("max_input_tokens") or 24000)
+	if _estimate_tokens(prompt) > max_input_tokens:
+		return {
+			"result": None,
+			"model": None,
+			"usage": None,
+			"warnings": [
+				f"narrative stage skipped: estimated input ~{_estimate_tokens(prompt)} tokens exceeds max_input_tokens {max_input_tokens} "
+				"(deterministic summary used)"
+			],
+		}
+	max_calls = max(1, int(report_settings.get("max_llm_calls") or 2))
+	messages = [{"role": "user", "content": prompt}]
+	pref = str(model_pref or "auto").strip().lower()
+	if pref not in ("", "auto", "clinical", "general", "both"):
+		pref = "auto"
+	clinical_model = str(report_settings.get("clinical_model") or "clinical").strip()
+	general_model = str(report_settings.get("general_model") or "general").strip()
+
+	if pref == "both":
+		# Run the contract on both models and keep both variants (the UI can
+		# compare them); the clinical model's narrative is the primary when
+		# both came back (this is a clinical domain).
+		out_clinical = _narrative_model_loop(ai_settings, clinical_model, list(messages), max_calls, prompt)
+		out_general = _narrative_model_loop(ai_settings, general_model, list(messages), max_calls, prompt)
+		warns = list(out_clinical["warnings"]) + list(out_general["warnings"])
+		res_c, res_g = out_clinical["result"], out_general["result"]
+		if res_c and res_g:
+			return {
+				"result": res_c,
+				"model": out_clinical["model"],
+				"usage": _merge_usage(out_clinical["usage"], out_general["usage"]),
+				"warnings": warns,
+				"variants": {
+					"clinical": res_c,
+					"general": res_g,
+					"model_clinical": out_clinical["model"],
+					"model_general": out_general["model"],
+					"usage_clinical": out_clinical["usage"],
+					"usage_general": out_general["usage"],
+				},
+			}
+		winner = out_clinical if res_c else out_general
+		loser = out_general if res_c else out_clinical
+		if winner["result"] is None:
+			return {
+				"result": None,
+				"model": None,
+				"usage": _merge_usage(out_clinical["usage"], out_general["usage"]),
+				"warnings": warns or ["narrative stage produced no valid contract on either model; deterministic summary used"],
+			}
+		winner["warnings"] = warns
+		return winner
+
+	if pref == "clinical":
+		model = clinical_model
+	elif pref == "general":
+		model = general_model
+	else:
+		model = stage_model(NARRATIVE_STAGE, report_settings)
+	out = _narrative_model_loop(ai_settings, model, messages, max_calls, prompt)
+	out["warnings"] = list(warnings) + list(out["warnings"])
+	return out

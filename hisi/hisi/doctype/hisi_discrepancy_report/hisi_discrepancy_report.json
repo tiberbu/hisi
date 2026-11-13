@@ -1,234 +1,264 @@
 {
- "actions": [],
- "allow_rename": 0,
- "autoname": "naming_series:",
- "creation": "2026-11-11 10:00:00.000000",
- "doctype": "DocType",
- "engine": "InnoDB",
- "field_order": [
-  "naming_series",
-  "subject_cr_id",
-  "subject_name",
-  "status",
-  "data_sources",
-  "ai_mode",
-  "ai_mode_used",
-  "column_break_1",
-  "tag_snapshot",
-  "prompt_snapshot",
-  "report",
-  "findings",
-  "raw_response",
-  "section_break_2",
-  "model",
-  "usage",
-  "started_at",
-  "finished_at",
-  "duration_ms",
-  "error",
-  "section_break_3",
-  "catalog_version",
-  "benefits_source",
-  "models_used",
-  "data_context_hash",
-  "findings_provenance"
- ],
- "fields": [
-  {
-   "default": "HIS-DRP-.YYYY.-.####",
-   "fieldname": "naming_series",
-   "fieldtype": "Data",
-   "label": "Naming Series",
-   "options": "HIS-DRP-.YYYY.-.####"
-  },
-  {
-   "fieldname": "subject_cr_id",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Subject CR ID",
-   "reqd": 1,
-   "search_index": 1
-  },
-  {
-   "fieldname": "subject_name",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Subject Name"
-  },
-  {
-   "default": "Queued",
-   "fieldname": "status",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Status",
-   "options": "Queued\nProcessing\nSuccess\nFailed"
-  },
-  {
-   "description": "Comma-separated patient_flow steps fetched for this report, e.g. consent,contributions,claims,preauth.",
-   "fieldname": "data_sources",
-   "fieldtype": "Small Text",
-   "in_list_view": 1,
-   "label": "Data Sources"
-  },
-  {
-   "description": "The AI mode requested for this run (per-run override; honoured only when HISI Report Settings allows it, else the configured default is used).",
-   "fieldname": "ai_mode",
-   "fieldtype": "Data",
-   "label": "AI Mode (requested)"
-  },
-  {
-   "description": "The AI mode the run actually used (deterministic_only, deterministic_plus_narrative, autonomous_full or legacy_llm).",
-   "fieldname": "ai_mode_used",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "AI Mode Used"
-  },
-  {
-   "fieldname": "column_break_1",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "JSON snapshot of the discrepancy tags declared at generation time: [{tag_code, label, instruction, severity}]. A tag edited or deleted afterwards cannot change the prompt.",
-   "fieldname": "tag_snapshot",
-   "fieldtype": "Long Text",
-   "label": "Tag Snapshot (JSON)"
-  },
-  {
-   "description": "The exact prompt text sent to the LLM (system instructions + data context + tag lines + the fixed output contract).",
-   "fieldname": "prompt_snapshot",
-   "fieldtype": "Long Text",
-   "label": "Prompt Snapshot"
-  },
-  {
-   "description": "The rendered markdown report (success path).",
-   "fieldname": "report",
-   "fieldtype": "Long Text",
-   "label": "Report"
-  },
-  {
-   "description": "The normalized findings JSON: {summary, overall, findings: [{tag_code, severity, title, detail, evidence}]}.",
-   "fieldname": "findings",
-   "fieldtype": "Long Text",
-   "label": "Findings (JSON)"
-  },
-  {
-   "description": "The raw LLM reply (kept for audit).",
-   "fieldname": "raw_response",
-   "fieldtype": "Long Text",
-   "label": "Raw Response"
-  },
-  {
-   "fieldname": "section_break_2",
-   "fieldtype": "Section Break"
-  },
-  {
-   "fieldname": "model",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Model"
-  },
-  {
-   "fieldname": "usage",
-   "fieldtype": "Small Text",
-   "label": "Usage (JSON)"
-  },
-  {
-   "fieldname": "started_at",
-   "fieldtype": "Datetime",
-   "label": "Started At"
-  },
-  {
-   "fieldname": "finished_at",
-   "fieldtype": "Datetime",
-   "label": "Finished At"
-  },
-  {
-   "fieldname": "duration_ms",
-   "fieldtype": "Int",
-   "label": "Duration (ms)"
-  },
-  {
-   "description": "The error object JSON on failure: {code, message} — code is one of LLM_NOT_CONFIGURED, LLM_TIMEOUT, LLM_HTTP_ERROR, LLM_PARSE_FAILED, DATA_UNAVAILABLE, WORKER_CRASHED, INTERNAL_ERROR.",
-   "fieldname": "error",
-   "fieldtype": "Long Text",
-   "label": "Error (JSON)"
-  },
-  {
-   "fieldname": "section_break_3",
-   "fieldtype": "Section Break"
-  },
-  {
-   "description": "The rule catalog version the run executed (HISI Discrepancy Tag rule catalog + evaluator code).",
-   "fieldname": "catalog_version",
-   "fieldtype": "Data",
-   "label": "Catalog Version"
-  },
-  {
-   "description": "Where the benefits knowledge came from for this run: static (the HISI Benefit Intervention matrix) or live (the BenefitsExchange endpoint).",
-   "fieldname": "benefits_source",
-   "fieldtype": "Data",
-   "label": "Benefits Source"
-  },
-  {
-   "description": "Comma-separated list of the LLM models actually called by this run (empty when no LLM was called, e.g. deterministic_only).",
-   "fieldname": "models_used",
-   "fieldtype": "Small Text",
-   "label": "Models Used"
-  },
-  {
-   "description": "SHA-256 of the fetched data context (inputs fingerprint for reproducibility).",
-   "fieldname": "data_context_hash",
-   "fieldtype": "Data",
-   "label": "Data Context Hash"
-  },
-  {
-   "description": "Per-finding provenance JSON: [{tag_code, title, severity, source, catalog_version, verified, evidence_refs}] — includes findings quarantined by evidence verification (audit trail).",
-   "fieldname": "findings_provenance",
-   "fieldtype": "Long Text",
-   "label": "Findings Provenance (JSON)"
-  }
- ],
- "index_web_pages_for_search": 0,
- "istable": 0,
- "issingle": 0,
- "modified": "2026-11-11 10:00:00.000000",
- "modified_by": "Administrator",
- "module": "Hisi",
- "name": "HISI Discrepancy Report",
- "owner": "Administrator",
- "permissions": [
-  {
-   "create": 1,
-   "delete": 1,
-   "email": 1,
-   "export": 1,
-   "print": 1,
-   "read": 1,
-   "report": 1,
-   "role": "System Manager",
-   "share": 1,
-   "write": 1
-  },
-  {
-   "create": 1,
-   "read": 1,
-   "role": "HISI Insurance Provider",
-   "write": 1
-  },
-  {
-   "read": 1,
-   "role": "HISI Insurance Surveillance",
-   "write": 1
-  },
-  {
-   "read": 1,
-   "role": "Desk User"
-  }
- ],
- "sort_field": "creation",
- "sort_order": "desc",
- "states": [],
- "track_changes": 1
+  "actions": [],
+  "allow_rename": 0,
+  "autoname": "naming_series:",
+  "creation": "2026-11-11 10:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "naming_series",
+    "subject_cr_id",
+    "subject_claim",
+    "subject_name",
+    "status",
+    "data_sources",
+    "ai_mode",
+    "ai_mode_used",
+    "column_break_1",
+    "tag_snapshot",
+    "prompt_snapshot",
+    "report",
+    "findings",
+    "raw_response",
+    "section_break_2",
+    "model",
+    "usage",
+    "started_at",
+    "finished_at",
+    "duration_ms",
+    "error",
+    "section_break_3",
+    "catalog_version",
+    "benefits_source",
+    "models_used",
+    "data_context_hash",
+    "findings_provenance"
+  ],
+  "fields": [
+    {
+      "default": "HIS-DRP-.YYYY.-.####",
+      "fieldname": "naming_series",
+      "fieldtype": "Data",
+      "label": "Naming Series",
+      "options": "HIS-DRP-.YYYY.-.####"
+    },
+    {
+      "fieldname": "subject_cr_id",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Subject CR ID",
+      "reqd": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "subject_claim",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Subject Claim (optional)",
+      "description": "When set, the report is scoped to this single claim (a payment-decision report) instead of the member's full history. Use the claim's record name or bundle id."
+    },
+    {
+      "fieldname": "subject_visit",
+      "fieldtype": "Data",
+      "in_list_view": 0,
+      "label": "Subject Visit (optional)",
+      "description": "When set, the report is scoped to this visit (all its claims and preauths) instead of the member's full history. Use the consented visit id."
+    },
+    {
+      "fieldname": "subject_preauth",
+      "fieldtype": "Data",
+      "in_list_view": 0,
+      "label": "Subject Preauth (optional)",
+      "description": "When set, the report is scoped to this preauthorization (plus its related claims). Use the preauth's record name or bundle id."
+    },
+    {
+      "fieldname": "model_pref",
+      "fieldtype": "Select",
+      "options": "auto\nclinical\ngeneral\nboth",
+      "default": "auto",
+      "label": "Narrative Model",
+      "description": "Which model writes the narrative: auto = stage routing, clinical = clinical model, general = general model, both = run clinical and general and keep both variants."
+    },
+    {
+      "fieldname": "subject_name",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Subject Name"
+    },
+    {
+      "default": "Queued",
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Status",
+      "options": "Queued\nProcessing\nSuccess\nFailed"
+    },
+    {
+      "description": "Comma-separated patient_flow steps fetched for this report, e.g. consent,contributions,claims,preauth.",
+      "fieldname": "data_sources",
+      "fieldtype": "Small Text",
+      "in_list_view": 1,
+      "label": "Data Sources"
+    },
+    {
+      "description": "The AI mode requested for this run (per-run override; honoured only when HISI Report Settings allows it, else the configured default is used).",
+      "fieldname": "ai_mode",
+      "fieldtype": "Data",
+      "label": "AI Mode (requested)"
+    },
+    {
+      "description": "The AI mode the run actually used (deterministic_only, deterministic_plus_narrative, autonomous_full or legacy_llm).",
+      "fieldname": "ai_mode_used",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "AI Mode Used"
+    },
+    {
+      "fieldname": "column_break_1",
+      "fieldtype": "Column Break"
+    },
+    {
+      "description": "JSON snapshot of the discrepancy tags declared at generation time: [{tag_code, label, instruction, severity}]. A tag edited or deleted afterwards cannot change the prompt.",
+      "fieldname": "tag_snapshot",
+      "fieldtype": "Long Text",
+      "label": "Tag Snapshot (JSON)"
+    },
+    {
+      "description": "The exact prompt text sent to the LLM (system instructions + data context + tag lines + the fixed output contract).",
+      "fieldname": "prompt_snapshot",
+      "fieldtype": "Long Text",
+      "label": "Prompt Snapshot"
+    },
+    {
+      "description": "The rendered markdown report (success path).",
+      "fieldname": "report",
+      "fieldtype": "Long Text",
+      "label": "Report"
+    },
+    {
+      "description": "The normalized findings JSON: {summary, overall, findings: [{tag_code, severity, title, detail, evidence}]}.",
+      "fieldname": "findings",
+      "fieldtype": "Long Text",
+      "label": "Findings (JSON)"
+    },
+    {
+      "description": "The raw LLM reply (kept for audit).",
+      "fieldname": "raw_response",
+      "fieldtype": "Long Text",
+      "label": "Raw Response"
+    },
+    {
+      "fieldname": "section_break_2",
+      "fieldtype": "Section Break"
+    },
+    {
+      "fieldname": "model",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Model"
+    },
+    {
+      "fieldname": "usage",
+      "fieldtype": "Small Text",
+      "label": "Usage (JSON)"
+    },
+    {
+      "fieldname": "started_at",
+      "fieldtype": "Datetime",
+      "label": "Started At"
+    },
+    {
+      "fieldname": "finished_at",
+      "fieldtype": "Datetime",
+      "label": "Finished At"
+    },
+    {
+      "fieldname": "duration_ms",
+      "fieldtype": "Int",
+      "label": "Duration (ms)"
+    },
+    {
+      "description": "The error object JSON on failure: {code, message} — code is one of LLM_NOT_CONFIGURED, LLM_TIMEOUT, LLM_HTTP_ERROR, LLM_PARSE_FAILED, DATA_UNAVAILABLE, WORKER_CRASHED, INTERNAL_ERROR.",
+      "fieldname": "error",
+      "fieldtype": "Long Text",
+      "label": "Error (JSON)"
+    },
+    {
+      "fieldname": "section_break_3",
+      "fieldtype": "Section Break"
+    },
+    {
+      "description": "The rule catalog version the run executed (HISI Discrepancy Tag rule catalog + evaluator code).",
+      "fieldname": "catalog_version",
+      "fieldtype": "Data",
+      "label": "Catalog Version"
+    },
+    {
+      "description": "Where the benefits knowledge came from for this run: static (the HISI Benefit Intervention matrix) or live (the BenefitsExchange endpoint).",
+      "fieldname": "benefits_source",
+      "fieldtype": "Data",
+      "label": "Benefits Source"
+    },
+    {
+      "description": "Comma-separated list of the LLM models actually called by this run (empty when no LLM was called, e.g. deterministic_only).",
+      "fieldname": "models_used",
+      "fieldtype": "Small Text",
+      "label": "Models Used"
+    },
+    {
+      "description": "SHA-256 of the fetched data context (inputs fingerprint for reproducibility).",
+      "fieldname": "data_context_hash",
+      "fieldtype": "Data",
+      "label": "Data Context Hash"
+    },
+    {
+      "description": "Per-finding provenance JSON: [{tag_code, title, severity, source, catalog_version, verified, evidence_refs}] — includes findings quarantined by evidence verification (audit trail).",
+      "fieldname": "findings_provenance",
+      "fieldtype": "Long Text",
+      "label": "Findings Provenance (JSON)"
+    }
+  ],
+  "index_web_pages_for_search": 0,
+  "istable": 0,
+  "issingle": 0,
+  "modified": "2026-11-11 10:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Hisi",
+  "name": "HISI Discrepancy Report",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    },
+    {
+      "create": 1,
+      "read": 1,
+      "role": "HISI Insurance Provider",
+      "write": 1
+    },
+    {
+      "read": 1,
+      "role": "HISI Insurance Surveillance",
+      "write": 1
+    },
+    {
+      "read": 1,
+      "role": "Desk User"
+    }
+  ],
+  "sort_field": "creation",
+  "sort_order": "desc",
+  "states": [],
+  "track_changes": 1
 }

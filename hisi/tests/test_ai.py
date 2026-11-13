@@ -22,7 +22,7 @@ from hisi.api.ai.prompt import (
 	parse_llm_json,
 	render_report_markdown,
 )
-from hisi.api.ai.seed import DEFAULT_TAGS, ensure_default_tags
+from hisi.api.ai.seed import DEFAULT_CLAIM_STATUSES, DEFAULT_TAGS, ensure_claim_status_config, ensure_default_tags
 from hisi.api.ai.settings import get_ai_data_sources, get_ai_settings
 from hisi.api.response_handler import BadRequest, UpstreamError
 
@@ -47,6 +47,11 @@ def _empty_sources_patches():
 		patch.object(worker, "fetch_patient_contributions", return_value={"cr_id": "C", "total": 0, "contributions": []}),
 		patch.object(worker, "step_claims", return_value={"records": []}),
 		patch.object(worker, "step_preauth", return_value={"records": []}),
+		patch.object(
+			worker,
+			"step_records_multi",
+			return_value={"visit_id": "", "records": [], "by_visit": {}, "by_resource": {}, "shr_id": "", "errors": {}},
+		),
 	)
 
 
@@ -219,26 +224,29 @@ class TestParse(IntegrationTestCase):
 		self.assertIn("Executive Summary", html_text)
 		self.assertIn("The audit reviewed &lt;b&gt;claims&lt;/b&gt; &amp; preauths.", html_text)
 		self.assertIn("Jane &amp; Co", html_text)
-		self.assertIn("Findings (1)", html_text)
+		self.assertIn("Findings", html_text)
 		self.assertIn("Dup &lt;script&gt;alert(1)&lt;/script&gt;", html_text)
 		self.assertNotIn("<script>alert(1)</script>", html_text)
-		self.assertIn("2026-01-01 00:00:00", html_text)
+		# the generated stamp is human-readable (date + time, no trailing
+		# seconds) in the masthead context block
+		self.assertIn("2026-01-01 00:00", html_text)
+		self.assertNotIn("2026-01-01 00:00:00", html_text)
 		# No model name on the rendered page (implementation detail, not
-		# copy) — and the masthead carries the report brand from hisi.brand
-		# (Clinical Validation Portal), not the old "CLAIM ↔ SHR AUDIT" wording.
+		# copy) — the masthead is the brand logo + "Discrepancy & Benefits
+		# Review" tagline only; the "HISI" name must not appear anywhere
+		# on the page, and neither should the old "CLAIM ↔ SHR AUDIT" wording.
 		self.assertNotIn("qwen3-27b", html_text)
-		self.assertIn("CLINICAL VALIDATION PORTAL", html_text)
-		self.assertNotIn("CLAIM ↔ SHR AUDIT", html_text)
-		# Rebrand: the rendered page carries no "HISI" wording (the brand
-		# mark is the bundled logo image in the header).
 		self.assertNotIn("HISI", html_text)
+		self.assertIn("Discrepancy Review", html_text)
+		self.assertNotIn("CLAIM ↔ SHR AUDIT", html_text)
 
 	def test_render_report_html_executive_falls_back_to_summary(self):
 		result = {"summary": "Only summary.", "executive_summary": "", "overall": "clean", "findings": []}
 		html_text = report_pdf.render_report_html("CR1", "", result)
 		self.assertIn("Only summary.", html_text)
-		self.assertIn("Findings (0)", html_text)
-		self.assertIn("No discrepancies found in the analyzed data.", html_text)
+		self.assertIn("Findings", html_text)
+		self.assertIn("No discrepancies found.", html_text)
+		self.assertIn("Member (all claims)", html_text)
 
 
 class TestDataContext(IntegrationTestCase):
@@ -452,6 +460,23 @@ class TestSeed(IntegrationTestCase):
 		ensure_default_tags()
 		self.assertEqual(frappe.db.get_value(TAG, "DUPLICATE_CLAIM", "label"), "Renamed duplicate")
 
+	def test_claim_status_seed_idempotent(self):
+		created = ensure_claim_status_config()
+		known = {row.claim_status for row in frappe.get_all("HISI Claim Status", fields=["claim_status"])}
+		self.assertTrue(known, "no claim-status rows")
+		self.assertIn("failed_dispatch", known)
+		self.assertIn("queued_for_validation", known)
+		# the not-sent statuses must be flagged sent_to_payer=0
+		self.assertEqual(frappe.db.get_value("HISI Claim Status", "failed_dispatch", "sent_to_payer"), 0)
+		self.assertEqual(frappe.db.get_value("HISI Claim Status", "queued_for_validation", "sent_to_payer"), 0)
+		self.assertEqual(frappe.db.get_value("HISI Claim Status", "submitted", "sent_to_payer"), 1)
+		# idempotent: second call creates nothing
+		self.assertEqual(ensure_claim_status_config(), 0)
+		# an operator override of a status note survives re-seeding
+		frappe.db.set_value("HISI Claim Status", "failed_dispatch", "note", "operator-edited note")
+		ensure_claim_status_config()
+		self.assertEqual(frappe.db.get_value("HISI Claim Status", "failed_dispatch", "note"), "operator-edited note")
+
 
 class TestWorkerFailClosed(IntegrationTestCase):
 	def setUp(self):
@@ -474,8 +499,8 @@ class TestWorkerFailClosed(IntegrationTestCase):
 	def test_unconfigured_llm_fails_closed(self):
 		_clear_ai_single()
 		doc = _make_report()
-		p1, p2, p3, p4 = _empty_sources_patches()
-		with p1, p2, p3, p4:
+		p1, p2, p3, p4, p5 = _empty_sources_patches()
+		with p1, p2, p3, p4, p5:
 			worker.run_discrepancy_report(doc.name)
 		row = _terminal(doc.name)
 		self.assertEqual(row["status"], "Failed")
@@ -488,7 +513,8 @@ class TestWorkerFailClosed(IntegrationTestCase):
 		p2 = patch.object(worker, "fetch_patient_contributions", side_effect=bad)
 		p3 = patch.object(worker, "step_claims", side_effect=bad)
 		p4 = patch.object(worker, "step_preauth", side_effect=bad)
-		with p1, p2, p3, p4:
+		p5 = patch.object(worker, "step_records_multi", side_effect=bad)
+		with p1, p2, p3, p4, p5:
 			worker.run_discrepancy_report(doc.name)
 		row = _terminal(doc.name)
 		self.assertEqual(row["status"], "Failed")
@@ -503,9 +529,9 @@ class TestWorkerFailClosed(IntegrationTestCase):
 			calls["n"] += 1
 			raise worker.llm_client.LLMConnectionError("no route to host")
 
-		p1, p2, p3, p4 = _empty_sources_patches()
-		p5 = patch.object(worker.llm_client, "stream_chat_completion", side_effect=boom)
-		with p1, p2, p3, p4, p5:
+		p1, p2, p3, p4, p5 = _empty_sources_patches()
+		p6 = patch.object(worker.llm_client, "stream_chat_completion", side_effect=boom)
+		with p1, p2, p3, p4, p5, p6:
 			worker.run_discrepancy_report(doc.name)
 		self.assertEqual(calls["n"], 2)  # initial + exactly one transport retry
 		row = _terminal(doc.name)
@@ -527,11 +553,11 @@ class TestWorkerFailClosed(IntegrationTestCase):
 			calls["n"] += 1
 			return next(replies), {"total_tokens": 5}
 
-		p1, p2, p3, p4 = _empty_sources_patches()
-		p5 = patch.object(worker.llm_client, "stream_chat_completion", side_effect=fake_stream)
+		p1, p2, p3, p4, p5 = _empty_sources_patches()
+		p6 = patch.object(worker.llm_client, "stream_chat_completion", side_effect=fake_stream)
 		# no real wkhtmltopdf run in tests — valid fake bytes exercise the PDF attach path
-		p6 = patch.object(report_pdf, "build_report_pdf_bytes", return_value=_fake_pdf_bytes())
-		with p1, p2, p3, p4, p5, p6 as mock_pdf:
+		p7 = patch.object(report_pdf, "build_report_pdf_bytes", return_value=_fake_pdf_bytes())
+		with p1, p2, p3, p4, p5, p6, p7 as mock_pdf:
 			worker.run_discrepancy_report(doc.name)
 		mock_pdf.assert_called_once()
 		self.assertEqual(calls["n"], 2)  # initial + exactly one corrective retry

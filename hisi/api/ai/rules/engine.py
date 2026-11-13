@@ -52,6 +52,9 @@ EVALUATORS = {
 	"tri_intervention": ev.eval_tri_intervention,
 	"tri_dates": ev.eval_tri_dates,
 	"tri_facility": ev.eval_tri_facility,
+	"claim_without_shr_data": ev.eval_claim_without_shr_data,
+	"shr_data_without_claim": ev.eval_shr_data_without_claim,
+	"claim_not_dispatched": ev.eval_claim_not_dispatched,
 }
 
 SEVERITIES = ("low", "medium", "high")
