@@ -141,6 +141,12 @@ def med_preauth_procedure_search_path() -> str:
         raise BadRequest("HISI Settings med_preauth_procedure_search is not configured.")
     return value
 
+def bmx_intervention_search_path() -> str:
+    value = (settings_doc().get("bmx_intervention_search") or "").strip()
+    if not value:
+        raise BadRequest("HISI Settings bmx_intervention_search is not configured.")
+    return value
+
 def timeline_data_source() -> str:
     # API for now; the Database source (direct SHR/consent/claims queries)
     # plugs into the same steps once the connection is available.

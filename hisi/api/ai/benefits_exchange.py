@@ -25,12 +25,6 @@ import time
 
 import frappe
 
-#: The BenefitsExchange (BMX) Intervention resource path under the base
-#: host. The API is a pure function of the intervention code (per the
-#: endpoint spec): ``?fields=["*"]&filters=[["intervention_code","=",code]]``
-#: — so a code's result is trivially cacheable per code.
-BMX_INTERVENTION_PATH = "/v1/bmx/resource/Intervention"
-
 #: Candidate wire keys per registry field — the normalizer takes the first
 #: present key (tolerant: the exact BMX field names are matched here).
 PROFILE_KEYS = {
@@ -90,17 +84,12 @@ def _cache_ttl_sec(settings) -> int:
 
 
 def _live_base_url(settings=None) -> str:
-	"""The BMX host: the ``benefits_base_url`` override in HISI Settings
-	when set, else the site's shared DHA origin — production ``base_url``,
-	or the simulation host while UAT simulation is on. The same base-URL
-	mechanism as every other DHA call; the report-settings argument is
-	retained for call-site compatibility only."""
+	"""The BMX host is the site's shared DHA origin — production ``base_url``,
+	or the simulation host while UAT simulation is on — the same base-URL
+	mechanism as every other DHA call (the BMX API path itself is configured
+	in HISI Settings as ``bmx_intervention_search``)."""
 	from hisi.api import patient as P
 
-	s = P.settings_doc()
-	base = str(s.get("benefits_base_url") or "").strip()
-	if base:
-		return base.rstrip("/")
 	return str(P.dha_origin()).rstrip("/")
 
 
@@ -120,7 +109,9 @@ def query_live(code: str, settings, timeout_sec: int = 20) -> dict | None:
 	if isinstance(cached, dict) and "payload" in cached:
 		return None if cached["payload"] is None else cached["payload"]
 
-	url = _live_base_url(settings) + BMX_INTERVENTION_PATH
+	from hisi.api import patient as P
+
+	url = _live_base_url(settings) + P.bmx_intervention_search_path()
 	params = {
 		"fields": '["*"]',
 		"filters": json.dumps([["intervention_code", "=", code]], separators=(",", ":")),

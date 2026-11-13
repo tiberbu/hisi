@@ -18,6 +18,7 @@
   "med_claim_search",
   "med_preauth_search",
   "med_preauth_procedure_search",
+  "bmx_intervention_search",
   "upstream_api_timeout",
   "jwt_ttl_s",
   "data_source",
@@ -29,7 +30,6 @@
   "fs_password",
   "enable_uat_simulation",
   "uat_base_url",
-  "benefits_base_url",
   "fetch_patient_consent",
   "patient_records_tab",
   "data_store_id",
@@ -130,13 +130,6 @@
    "fieldname": "uat_base_url",
    "fieldtype": "Data",
    "label": "UAT Base URL"
-  },
-  {
-   "description": "Base URL host for the BenefitsExchange (BMX) Intervention resource, e.g. https://uat.dha.go.ke. Empty follows the shared DHA origin above (base_url, or the UAT host while simulation is on) — the same base-URL mechanism as the other DHA APIs. Auth is the site DHA JWT (consumer_key/consumer_secret).",
-   "fieldname": "benefits_base_url",
-   "fieldtype": "Data",
-   "label": "Benefits Base URL",
-   "options": "URL"
   },
   {
    "fieldname": "fetch_patient_consent",
@@ -277,6 +270,12 @@
    "fieldname": "med_preauth_procedure_search",
    "fieldtype": "Data",
    "label": "Med Preauth Procedure Search"
+  },
+  {
+   "default": "/v1/bmx/resource/Intervention",
+   "fieldname": "bmx_intervention_search",
+   "fieldtype": "Data",
+   "label": "BMX Intervention Search"
   },
   {
    "default": "API",
