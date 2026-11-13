@@ -19,9 +19,12 @@ from frappe.utils import now
 
 DEFAULT_SYSTEM_PROMPT = (
 	"You are a health-insurance claims auditor. You are given a member's data "
-	"(consents, contribution payments, claims, and preauthorizations) and a "
+	"(consents, claims, and preauthorizations) and a "
 	"list of discrepancy checks. Compare the data strictly against the checks "
 	"and report each discrepancy you can support with the data.\n"
+	"The member's contribution ledger is NOT part of the analysis: contribution "
+	"decisions are made by the payer, so never flag, score or comment on "
+	"contribution payments, gaps or amounts in the summary.\n"
 	"When a visits section is present, each visit bucket holds the visit's "
 	"consent state, the Shared Health Record (SHR) resources submitted for "
 	"that visit, and the claim/preauthorization records linked to it. Compare "
@@ -262,8 +265,15 @@ def render_report_markdown(
 	subject_name: str,
 	result: dict,
 	tags_by_code: dict | None = None,
+	coverage: dict | None = None,
+	contribution_ledger: list | None = None,
 ) -> str:
-	"""Render the normalized result as the stored markdown report."""
+	"""Render the normalized result as the stored markdown report.
+
+	``coverage`` (per-lane status + counts) and ``contribution_ledger``
+	(sorted entries) mirror the PDF: the Coverage section states what the
+	review was based on; the ledger groups the contribution data in one
+	context-only section (it never drives findings)."""
 	lines = ["# Discrepancy Report — " + (str(cr_id or "unknown member"))]
 	if subject_name:
 		lines.append("")
@@ -271,6 +281,22 @@ def render_report_markdown(
 	lines.append("")
 	lines.append(f"Overall: **{result.get('overall')}** · Findings: {len(result.get('findings') or [])}")
 	lines.append("")
+	if coverage and coverage.get("lanes"):
+		lines += ["## Coverage — what this review evaluated", ""]
+		if coverage.get("scope"):
+			lines += [f"Scope: {coverage['scope']}", ""]
+		lines += ["| Lane | Status | Records |", "| --- | --- | ---: |"]
+		for lane in coverage["lanes"]:
+			count = lane.get("count")
+			lines.append(
+				f"| {lane.get('label') or lane.get('key')} | {str(lane.get('status') or 'unknown').capitalize()}"
+				f" | {count if count is not None else '—'} |"
+			)
+			if str(lane.get("status")) == "error" and str(lane.get("detail") or "").strip():
+				lines.append(f"| | — | {lane['detail']} |")
+			lines.append("")
+		if any(l.get("status") in ("empty", "error") for l in coverage["lanes"]):
+			lines += ["Lanes marked Empty or Errored were not part of the evidence; findings depend only on the available lanes.", ""]
 	if result.get("summary"):
 		lines += ["## Summary", "", str(result["summary"]), ""]
 	lines += ["## Findings", ""]
@@ -287,6 +313,24 @@ def render_report_markdown(
 				lines.append("")
 	else:
 		lines += ["No discrepancies found in the analyzed data.", ""]
+	if contribution_ledger:
+		lines += [
+			"## Contribution ledger",
+			"",
+			"_Context only — contribution decisions are made by the payer and are not part of this analysis._",
+			"",
+			"| Period | Amount | Reference |",
+			"| --- | ---: | --- |",
+		]
+		for entry in contribution_ledger:
+			amount = entry.get("amount")
+			try:
+				amount_text = f"{float(amount):,.2f}".rstrip("0").rstrip(".") if float(amount) else "—"
+			except (TypeError, ValueError):
+				amount_text = "—"
+			ref = str(entry.get("payment_reference") or entry.get("invoice_number") or "").strip() or "—"
+			lines.append(f"| {str(entry.get('period') or '').strip() or '—'} | {amount_text} | {ref} |")
+		lines.append("")
 	lines.append(f"Generated {now()}")
 	return "\n".join(lines).rstrip() + "\n"
 
@@ -353,10 +397,18 @@ def build_data_context(cr_id: str, sources: list[str], results: dict, errors: di
 	visit with the consent state, the Shared Health Record resources
 	submitted for the visit (compact FHIR views), and the claim/preauth
 	records linked to it — the per-visit claim<->SHR comparison data.
+
+	The contribution lane is excluded: contributions are context only (the
+	payer makes contribution decisions) — shown in a dedicated report section
+	rather than fed to the model to comment on. The raw ``records`` lane is
+	also excluded from the data section: the ``visits`` join already carries
+	the per-visit Shared Health Record resources (briefed) + linked claims, so
+	the full lane would only bloat the prompt (fetch errors still flow through
+	``errors`` so accuracy rule 4 keeps working).
 	"""
 	data = {}
 	for step in sources:
-		if step in results:
+		if step in results and step not in ("contributions", "records"):
 			data[step] = _trim_step(results[step], max_records)
 	context = {
 		"cr_id": str(cr_id or ""),

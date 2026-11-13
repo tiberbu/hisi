@@ -287,6 +287,18 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	warnings.extend(engine_out["warnings"])
 	result = engine_out["result"]
 
+	# Coverage: what the analysis could actually see, per lane (available /
+	# empty / errored + counts) — rendered as its own report section so a
+	# clean verdict always states its caveats. The contribution ledger is
+	# carried for the same: grouped, context-only, never a finding source.
+	scope_label = {
+		"claim": f"Single claim — {claim_ref}",
+		"visit": f"Single visit — {visit_ref}",
+		"preauth": f"Single preauthorization — {preauth_ref}",
+	}.get(scope_kind, "Member full history")
+	coverage = ctx.coverage(scope_label)
+	contribution_ledger = ctx.contribution_ledger()
+
 	# The optional narrative stage: redacted digest in, validated prose out;
 	# any failure keeps the deterministic summary (the report never blocks on
 	# the model).
@@ -339,11 +351,11 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	)
 	doc.db_set("prompt_snapshot", audit, update_modified=False)
 
-	markdown = render_report_markdown(cr_id, str(doc.subject_name or ""), result)
+	markdown = render_report_markdown(cr_id, str(doc.subject_name or ""), result, coverage=coverage, contribution_ledger=contribution_ledger)
 	_mark_success(
 		report_name,
 		duration_ms(),
-		pdf_bytes=_render_pdf(doc, result, duration_ms, sources, scoped_entity),
+		pdf_bytes=_render_pdf(doc, result, duration_ms, sources, scoped_entity, coverage=coverage, contribution_ledger=contribution_ledger),
 		report=markdown,
 		findings=json.dumps(result, ensure_ascii=False),
 		usage=json.dumps(stage["usage"], ensure_ascii=False) if (mode in ("deterministic_plus_narrative", "autonomous_full") and stage.get("usage")) else None,
@@ -357,7 +369,7 @@ def _run_deterministic(doc, report_name: str, settings, sources: list, results: 
 	)
 
 
-def _render_pdf(doc, result: dict, duration_ms, sources: list, scoped_claim=None):
+def _render_pdf(doc, result: dict, duration_ms, sources: list, scoped_claim=None, coverage: dict | None = None, contribution_ledger: list | None = None):
 	"""Best-effort PDF render for a run (both pipelines): a host missing the
 	PDF engine degrades to a report without a PDF file, never a failure."""
 	try:
@@ -380,6 +392,8 @@ def _render_pdf(doc, result: dict, duration_ms, sources: list, scoped_claim=None
 			subject_preauth=subject_preauth,
 			claim_status=status_value,
 			claim_status_label=status_label,
+			coverage=coverage,
+			contribution_ledger=contribution_ledger,
 		)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"report pdf render {doc.name}")

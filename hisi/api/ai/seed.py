@@ -60,17 +60,10 @@ DEFAULT_TAGS = (
 		"duplicate_claim",
 	),
 	(
-		"CONTRIBUTION_GAP",
-		"Contribution gap",
-		"medium",
-		"A gap in the member's contribution ledger: consecutive periods with no payment recorded where contributions are expected.",
-		"contribution_gap",
-	),
-	(
 		"TIMING_ANOMALY",
 		"Timing anomaly",
 		"low",
-		"Dates that are out of logical order: a claim submitted before its service date, a preauthorization decided after the claim, or a contribution posted for a future period.",
+		"Dates that are out of logical order: a claim submitted before its service date, or a preauthorization decided after the claim it was supposed to precede.",
 		"timing_anomaly",
 	),
 	(
@@ -164,8 +157,15 @@ def ensure_default_tags() -> int:
 		)
 		doc.insert(ignore_permissions=True)
 		created += 1
-	if created and not frappe.flags.in_test:
+	# Legacy contribution-gap tags stop driving findings: contributions are
+	# context only (the payer makes contribution decisions). A pre-existing
+	# tag is switched off (kept for history) instead of deleted.
+	for row in frappe.get_all(TAG, fields=["name", "tag_code", "rule_type"]):
+		if str(row.tag_code or "").strip().upper() == "CONTRIBUTION_GAP" and str(row.rule_type or "code") == "code":
+			frappe.db.set_value(TAG, row.name, {"rule_type": "off", "version": 2})
+	if created or not frappe.flags.in_test:
 		frappe.db.commit()
+	if created and not frappe.flags.in_test:
 		frappe.logger("hisi.ai").info(f"seeded {created} default discrepancy tag(s)")
 	return created
 
